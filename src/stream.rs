@@ -288,10 +288,7 @@ impl<T> AsyncStreamSender<T> {
     /// Returns `true` if the consumer has been dropped.
     #[must_use]
     pub fn is_consumer_gone(&self) -> bool {
-        self.back_pressure
-            .consumer_gone
-            .lock()
-            .map_or(true, |g| *g)
+        self.back_pressure.consumer_gone.lock().map_or(true, |g| *g)
     }
 }
 
