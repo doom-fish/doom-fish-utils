@@ -10,7 +10,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Provides `AsyncCompletion<T>` and `SyncCompletion<T>` with `AtomicBool` double-fire guards. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
-| [`panic_safe`](src/panic_safe.rs) | `panic_safe(...)` wrapper for `extern "C"` callbacks so a Rust panic doesn't unwind into Swift / C code. |
+| [`panic_safe`](src/panic_safe.rs) | `catch_user_panic(...)` wrapper for `extern "C"` callbacks so a Rust panic doesn't unwind into Swift / C code. |
 | [`stream`](src/stream.rs) | `BoundedAsyncStream<T>` — executor-agnostic, bounded, lossy-by-default async stream lifted from the screencapturekit-rs `AsyncSCStream` pattern. Generic over any item type. |
 
 ## Design tenets

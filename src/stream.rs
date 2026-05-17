@@ -16,7 +16,7 @@
 //! streams (UI input, frame capture, BLE notifications, location updates):
 //! a slow consumer should always see the latest event, not a stale queue.
 //! When you instead need back-pressure (every event must be delivered),
-//! use [`BoundedAsyncStream::push_or_block`] which blocks the producer
+//! use [`AsyncStreamSender::push_or_block`] which blocks the producer
 //! until the consumer drains capacity.
 //!
 //! # Example
@@ -49,6 +49,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 
@@ -70,6 +71,14 @@ struct BackPressure {
     /// Set to `true` when the stream is dropped — wakes any blocked
     /// producers so they can bail out instead of waiting forever.
     consumer_gone: Mutex<bool>,
+    /// Tracks how many live [`AsyncStreamSender`] handles exist.
+    ///
+    /// Using an explicit atomic counter rather than `Arc::strong_count` avoids
+    /// the TOCTOU race where two concurrently-dropped last senders both observe
+    /// a count ≠ 2 and neither marks the stream `closed`, leaving the consumer
+    /// blocked forever. With an atomic decrement the last sender to reach zero
+    /// is identified unambiguously regardless of scheduling interleaving.
+    sender_count: AtomicUsize,
 }
 
 /// A bounded, lossy-by-default, executor-agnostic async stream.
@@ -95,6 +104,9 @@ pub struct AsyncStreamSender<T> {
 
 impl<T> Clone for AsyncStreamSender<T> {
     fn clone(&self) -> Self {
+        self.back_pressure
+            .sender_count
+            .fetch_add(1, Ordering::Relaxed);
         Self {
             state: Arc::clone(&self.state),
             back_pressure: Arc::clone(&self.back_pressure),
@@ -142,6 +154,7 @@ impl<T> BoundedAsyncStream<T> {
         let back_pressure = Arc::new(BackPressure {
             cvar: Condvar::new(),
             consumer_gone: Mutex::new(false),
+            sender_count: AtomicUsize::new(1),
         });
 
         let stream = Self {
@@ -294,11 +307,24 @@ impl<T> AsyncStreamSender<T> {
 
 impl<T> Drop for AsyncStreamSender<T> {
     fn drop(&mut self) {
-        // If this was the last sender, mark the stream closed and wake any
-        // pending consumer so its `next()` returns `None`.
-        let strong = Arc::strong_count(&self.state);
-        if strong == 2 {
-            // exactly one sender (`self`) + the consumer
+        // Atomically decrement the sender count. The thread that observes the
+        // count dropping from 1 → 0 is, by definition, the last sender; it is
+        // responsible for marking the stream closed and waking the consumer.
+        //
+        // `AcqRel` ordering: the Release half makes all prior pushes visible to
+        // whoever wins the "count → 0" race; the Acquire half ensures we observe
+        // all prior decrements before deciding we are the last sender.
+        //
+        // This replaces the previous `Arc::strong_count` check, which had a
+        // TOCTOU race: two concurrently-dropped last senders could both observe
+        // strong_count == 3 (A + B + consumer), decide neither was "last", and
+        // leave the consumer blocked forever.
+        let prev = self
+            .back_pressure
+            .sender_count
+            .fetch_sub(1, Ordering::AcqRel);
+        if prev == 1 {
+            // We are the last sender; close the stream and wake the consumer.
             if let Ok(mut state) = self.state.lock() {
                 state.closed = true;
                 if let Some(w) = state.waker.take() {
@@ -306,7 +332,7 @@ impl<T> Drop for AsyncStreamSender<T> {
                 }
             }
         }
-        // Wake any back-pressure-blocked clones so they bail out cleanly.
+        // Wake any push_or_block-blocked clones so they bail out cleanly.
         self.back_pressure.cvar.notify_all();
     }
 }

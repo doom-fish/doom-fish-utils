@@ -25,6 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context, Poll, Waker};
 
+use crate::panic_safe::catch_user_panic;
+
 // ============================================================================
 // Synchronous Completion (blocking)
 // ============================================================================
@@ -247,7 +249,7 @@ impl<T> AsyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::new()`.
+    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::create()`.
     /// This function consumes the Arc reference, so it must only be called once per context.
     pub unsafe fn complete_ok(context: SyncCompletionPtr, value: T) {
         Self::complete_with_result(context, Ok(value));
@@ -257,7 +259,7 @@ impl<T> AsyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::new()`.
+    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::create()`.
     /// This function consumes the Arc reference, so it must only be called once per context.
     pub unsafe fn complete_err(context: SyncCompletionPtr, error: String) {
         Self::complete_with_result(context, Err(error));
@@ -367,13 +369,19 @@ impl UnitCompletion {
     /// C callback for operations that return (context, success, `error_msg`)
     ///
     /// This can be used directly as an FFI callback function.
+    ///
+    /// The body is wrapped in [`catch_user_panic`] so that a mutex-poison
+    /// panic (or any other unexpected panic) does not unwind across the
+    /// `extern "C"` boundary, which would be undefined behaviour.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn callback(context: *mut c_void, success: bool, msg: *const i8) {
-        if success {
-            unsafe { Self::complete_ok(context, ()) };
-        } else {
-            let error = unsafe { error_from_cstr(msg) };
-            unsafe { Self::complete_err(context, error) };
-        }
+        catch_user_panic("UnitCompletion::callback", || {
+            if success {
+                unsafe { Self::complete_ok(context, ()) };
+            } else {
+                let error = unsafe { error_from_cstr(msg) };
+                unsafe { Self::complete_err(context, error) };
+            }
+        });
     }
 }

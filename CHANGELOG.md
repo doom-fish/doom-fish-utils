@@ -5,6 +5,29 @@ All notable changes to `doom-fish-utils` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-05-17
+
+### Fixed
+
+- `stream`: `AsyncStreamSender::drop` previously used `Arc::strong_count` to
+  detect the last sender, which has an inherent TOCTOU race — two concurrently
+  dropped last senders could both observe a count ≠ 2 and neither would mark
+  the stream `closed`, leaving the consumer blocked forever. Replaced with an
+  explicit `AtomicUsize sender_count` stored in `BackPressure`; the sender that
+  atomically decrements from 1 → 0 is the unambiguous last sender and sets
+  `closed = true` under the state mutex before waking the consumer.
+  `AsyncStreamSender::clone` now increments the counter atomically.
+- `completion`: `AsyncCompletion::complete_ok` and `complete_err` doc strings
+  incorrectly referred to `AsyncCompletion::new()` (which does not exist); the
+  correct constructor is `AsyncCompletion::create()`.
+- `completion`: `UnitCompletion::callback` (`extern "C"`) was not wrapped in
+  `catch_user_panic`, so a mutex-poison panic inside `complete_ok`/`complete_err`
+  could unwind across the FFI boundary — undefined behaviour. The body is now
+  wrapped in `catch_user_panic("UnitCompletion::callback", …)`.
+- `README.md` / `CHANGELOG.md`: corrected the `panic_safe` module entry to
+  reference the actual public function `catch_user_panic` (not the non-existent
+  `panic_safe<F, R>` that was referenced previously).
+
 ## [0.1.0] — 2026-05-17
 
 Initial release.
@@ -23,9 +46,9 @@ Initial release.
   `sc_free_string`).
 - `four_char_code` module — `FourCharCode` newtype with `Display`,
   `from_bytes`, `as_u32` helpers.
-- `panic_safe` module — `panic_safe<F, R>` wrapper that catches Rust
-  panics inside `extern "C"` callbacks and reports them to stderr
-  before returning a caller-supplied default.
+- `panic_safe` module — `catch_user_panic<F: FnOnce()>` wrapper that catches Rust
+  panics inside `extern "C"` callbacks and reports them to stderr.
+  Also exports `log_callback_panic` for callers that already hold a panic payload.
 - `stream` module — `BoundedAsyncStream<T>`, `AsyncStreamSender<T>`,
   `NextItem<'_, T>`. Executor-agnostic, bounded async stream lifted
   and generalised from the `screencapturekit-rs` `AsyncSCStream`
