@@ -8,6 +8,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | Module | Purpose |
 |--------|---------|
 | [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Provides `AsyncCompletion<T>` and `SyncCompletion<T>` with `AtomicBool` double-fire guards. |
+| [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
 | [`panic_safe`](src/panic_safe.rs) | `catch_user_panic(...)` wrapper for `extern "C"` callbacks so a Rust panic doesn't unwind into Swift / C code. |

@@ -5,6 +5,12 @@ All notable changes to `doom-fish-utils` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-05-18
+
+### Added
+
+- `ffi_callbacks` module with six shared callback aliases for cross-crate Swift / Obj-C bridges: `JsonCallback`, `AsyncCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, and `AsyncCb`.
+
 ## [0.1.1] — 2026-05-17
 
 ### Fixed
