@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-05-19
+
+### Added
+
+- Added `spsc::SpscRing<T, N>` with `SpscProducer`, `SpscConsumer`, non-blocking `push`, lossy `push_overwrite`, `pop`, `pop_async`, and a feature-gated `futures_core::Stream` wrapper for real-time callback → async-consumer handoff.
+- Added concurrent stress coverage for sequence preservation, overwrite-oldest semantics, non-blocking producer behavior, async wakeups, and the feature-gated stream wrapper.
+
 ## [0.2.1] - 2026-05-19
 
 - Bump MSRV from 1.70 to 1.76 to match fleet baseline.

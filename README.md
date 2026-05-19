@@ -12,6 +12,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
 | [`panic_safe`](src/panic_safe.rs) | `catch_user_panic(...)` wrapper for `extern "C"` callbacks so a Rust panic doesn't unwind into Swift / C code. |
+| [`spsc`](src/spsc.rs) | `SpscRing<T, N>` — lock-free, bounded single-producer/single-consumer ring for real-time callback threads feeding async consumers. |
 | [`stream`](src/stream.rs) | `BoundedAsyncStream<T>` — executor-agnostic, bounded, lossy-by-default async stream lifted from the screencapturekit-rs `AsyncSCStream` pattern. Generic over any item type. |
 
 ## Design tenets
@@ -27,9 +28,9 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 ## Optional features
 
-- `futures-stream` — adds a `futures_core::Stream` impl on
-  `BoundedAsyncStream<T>` so the stream can be used directly with
-  `futures::StreamExt` / `tokio_stream`.
+- `futures-stream` — adds `futures_core::Stream` wrappers for
+  `BoundedAsyncStream<T>` and `spsc::SpscConsumer<T, N>` so either
+  consumer can be used directly with `futures::StreamExt` / `tokio_stream`.
 
 ## Stability
 

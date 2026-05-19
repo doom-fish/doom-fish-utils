@@ -12,6 +12,7 @@
 //! | [`ffi_string`] | Owned-string helpers around heap-allocated C strings |
 //! | [`four_char_code`] | `FourCharCode` wrapper (used by pixel formats, `OSType` codes, etc.) |
 //! | [`panic_safe`] | Catches panics inside `extern "C"` callbacks so they don't unwind across the FFI boundary |
+//! | [`spsc`] | Lock-free single-producer single-consumer rings for real-time callback → async-consumer handoff |
 //! | [`stream`] | Executor-agnostic bounded async streams (waker + `VecDeque` + lossy oldest-drop policy) |
 //!
 //! ## Design tenets
@@ -31,7 +32,7 @@
 //! Breaking changes ship as major version bumps; minor versions add modules
 //! or non-breaking helpers.
 
-#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.2.0")]
+#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.3.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod completion;
@@ -39,6 +40,7 @@ pub mod ffi_callbacks;
 pub mod ffi_string;
 pub mod four_char_code;
 pub mod panic_safe;
+pub mod spsc;
 pub mod stream;
 
 pub use four_char_code::FourCharCode;

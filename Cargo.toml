@@ -1,6 +1,6 @@
 [package]
 name = "doom-fish-utils"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/doom-fish-utils"
@@ -33,15 +33,18 @@ crate-type = ["lib"]
 
 [features]
 default = []
-# Provides a `futures_core::Stream` impl on `BoundedAsyncStream<T>` so the
-# stream can be used directly with `futures::StreamExt` / `tokio_stream`.
+# Provides `futures_core::Stream` impls on the async consumer wrappers in this
+# crate (`BoundedAsyncStream<T>` and `spsc::SpscConsumerStream<'_, T, N>`).
 # Off by default to keep the dependency footprint minimal.
 futures-stream = ["dep:futures-core"]
 
 [dependencies]
+crossbeam-queue = "0.3"
 futures-core = { version = "0.3", optional = true, default-features = false }
+futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
+pollster = "0.3"
 
 [package.metadata.docs.rs]
 all-features = true
