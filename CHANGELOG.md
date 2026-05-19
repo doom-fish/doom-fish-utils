@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.1] - 2026-05-19
+
+- Bump MSRV from 1.70 to 1.76 to match fleet baseline.
+
 All notable changes to `doom-fish-utils` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

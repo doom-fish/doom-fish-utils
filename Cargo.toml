@@ -1,6 +1,6 @@
 [package]
 name = "doom-fish-utils"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/doom-fish-utils"
@@ -9,7 +9,7 @@ description = "Framework-agnostic FFI utilities shared by the doom-fish Apple-SD
 authors = ["Per Johansson <per@doom.fish>"]
 keywords = ["macos", "ffi", "apple", "async", "doom-fish"]
 categories = ["api-bindings", "asynchronous", "os::macos-apis"]
-rust-version = "1.70"
+rust-version = "1.76"
 readme = "README.md"
 include = [
     "src/**/*",

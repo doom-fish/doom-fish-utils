@@ -16,11 +16,8 @@ pub type JsonCallback = unsafe extern "C" fn(json: *mut c_char, user_data: *mut 
 ///
 /// `status` is the operation's exit code (0 = ok, non-zero = error code).
 /// `error` is an optional `NSError` JSON payload (may be null on success).
-pub type AsyncCallback = unsafe extern "C" fn(
-    status: i32,
-    error: *mut c_char,
-    user_data: *mut c_void,
-);
+pub type AsyncCallback =
+    unsafe extern "C" fn(status: i32, error: *mut c_char, user_data: *mut c_void);
 
 /// Fire-and-forget callback with no payload other than the `user_data` pointer.
 pub type SimpleCallback = unsafe extern "C" fn(user_data: *mut c_void);
@@ -32,10 +29,8 @@ pub type DropCallback = unsafe extern "C" fn(user_data: *mut c_void);
 /// Stream-style callback that fires for each event in an ongoing subscription.
 ///
 /// `event_json` is a heap-owned JSON-encoded event payload (caller-owned).
-pub type StreamEventCallback = unsafe extern "C" fn(
-    event_json: *mut c_char,
-    user_data: *mut c_void,
-);
+pub type StreamEventCallback =
+    unsafe extern "C" fn(event_json: *mut c_char, user_data: *mut c_void);
 
 /// Async callback variant used by avassetwriter / weatherkit / webkit bridges
 /// that deliver a (`status`, `result_json`, `error`, `user_data`) tuple.
