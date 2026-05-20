@@ -197,3 +197,101 @@ where
 {
     ffi_string_owned(ffi_call, free_fn).unwrap_or_default()
 }
+
+/// Take ownership of an already-obtained Swift/Objective-C C string pointer
+/// and free the source via `free_fn`.
+///
+/// This matches the common `take_string(ptr) -> Option<String>` pattern that
+/// every doom-fish crate has been duplicating locally. Use this from your
+/// crate's bridge helper so the body lives in one place.
+///
+/// Returns `Some(String)` for a non-null, non-empty pointer; `None` otherwise.
+/// In both branches the pointer is freed (the null branch is a no-op).
+///
+/// # Safety
+///
+/// The caller must guarantee that `ptr` is either null or a valid,
+/// null-terminated C string allocated by the Swift / Objective-C bridge in a
+/// way that `free_fn` correctly releases. The pointer is consumed exactly once.
+#[inline]
+pub unsafe fn take_owned_cstring<Free>(ptr: *mut i8, free_fn: Free) -> Option<String>
+where
+    Free: FnOnce(*mut i8),
+{
+    if ptr.is_null() {
+        return None;
+    }
+    ffi_string_owned(|| ptr, free_fn)
+}
+
+/// Same as [`take_owned_cstring`] but for `*mut std::ffi::c_char`.
+///
+/// Rust 1.71+ distinguishes `c_char` from `i8` on some targets. Functionally
+/// identical to the `i8` variant.
+///
+/// # Safety
+///
+/// Same requirements as [`take_owned_cstring`].
+#[inline]
+pub unsafe fn take_owned_cstring_c<Free>(
+    ptr: *mut core::ffi::c_char,
+    free_fn: Free,
+) -> Option<String>
+where
+    Free: FnOnce(*mut core::ffi::c_char),
+{
+    if ptr.is_null() {
+        return None;
+    }
+    let bytes = CStr::from_ptr(ptr).to_bytes().to_vec();
+    free_fn(ptr);
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+
+#[cfg(test)]
+mod take_owned_tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn take_owned_cstring_null_returns_none() {
+        let freed = std::cell::Cell::new(false);
+        let result = unsafe { take_owned_cstring(core::ptr::null_mut(), |_| freed.set(true)) };
+        assert_eq!(result, None);
+        assert!(!freed.get(), "free fn must not be called for null ptr");
+    }
+
+    #[test]
+    fn take_owned_cstring_returns_value_and_frees() {
+        let s = CString::new("hello").unwrap();
+        let raw = s.into_raw();
+        let freed = std::cell::Cell::new(false);
+        let result = unsafe {
+            take_owned_cstring(raw.cast::<i8>(), |p| {
+                freed.set(true);
+                let _ = CString::from_raw(p.cast::<core::ffi::c_char>());
+            })
+        };
+        assert_eq!(result.as_deref(), Some("hello"));
+        assert!(freed.get(), "free fn must be called for non-null ptr");
+    }
+
+    #[test]
+    fn take_owned_cstring_c_returns_value_and_frees() {
+        let s = CString::new("world").unwrap();
+        let raw = s.into_raw();
+        let freed = std::cell::Cell::new(false);
+        let result = unsafe {
+            take_owned_cstring_c(raw, |p| {
+                freed.set(true);
+                let _ = CString::from_raw(p);
+            })
+        };
+        assert_eq!(result.as_deref(), Some("world"));
+        assert!(freed.get());
+    }
+}

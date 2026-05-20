@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] - 2026-05-20
+
+### Added
+
+- `ffi_string::take_owned_cstring` and `ffi_string::take_owned_cstring_c` — thin helpers that take an already-obtained Swift/Objective-C C-string pointer plus a per-crate free function, return `Option<String>`, and always release the pointer. Centralises the `take_string(ptr) -> Option<String>` pattern that ~26 doom-fish sibling crates had been duplicating locally.
+
 ## [0.3.1] - 2026-05-20
 
 - Clippy hygiene sweep: cleared all `-D warnings` lints across the crate. No public API change.
