@@ -268,8 +268,8 @@ impl<T, const N: usize> futures_core::Stream for SpscConsumerStream<'_, T, N> {
 
 #[cfg(test)]
 mod tests {
-    use std::future::poll_fn;
-    use std::pin::Pin;
+    
+    
     use std::thread;
     use std::time::{Duration, Instant};
 
