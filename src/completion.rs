@@ -97,7 +97,11 @@ impl<T> SyncCompletion<T> {
     ///
     /// Panics if the internal mutex is poisoned.
     pub fn wait(self) -> Result<T, String> {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Use Condvar::wait_while to handle spurious wakeups in a single
         // expression. The predicate returns true while we should keep
         // waiting (i.e. no result yet).
@@ -182,7 +186,12 @@ impl<T> SyncCompletion<T> {
 
         let inner = unsafe { Arc::from_raw(context.cast::<SyncCompletionInner<T>>()) };
         {
-            let mut state = inner.state.lock().unwrap();
+            // Poison-tolerant: this runs inside the FFI completion callback, so a
+            // panic here would unwind across the `extern "C"` boundary (UB).
+            let mut state = inner
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.result = Some(result);
         }
         inner.cvar.notify_one();
@@ -301,7 +310,12 @@ impl<T> AsyncCompletion<T> {
         let inner = unsafe { Arc::from_raw(context.cast::<AsyncCompletionInner<T>>()) };
 
         let waker = {
-            let mut state = inner.state.lock().unwrap();
+            // Poison-tolerant: this runs inside the FFI completion callback, so a
+            // panic here would unwind across the `extern "C"` boundary (UB).
+            let mut state = inner
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.result = Some(result);
             state.waker.take()
         };
@@ -320,7 +334,11 @@ impl<T> Future for AsyncCompletionFuture<T> {
     type Output = Result<T, String>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.inner.state.lock().unwrap();
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         state.result.take().map_or_else(
             || {
