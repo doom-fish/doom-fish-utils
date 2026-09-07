@@ -18,7 +18,7 @@
 //! // let result = completion.wait();
 //! ```
 
-use std::ffi::{c_void, CStr};
+use std::ffi::{c_char, c_void, CStr};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,13 +41,11 @@ struct SyncCompletionState<T> {
     result: Option<Result<T, String>>,
 }
 
-/// Backing storage for `SyncCompletion` — held behind an `Arc` so the
-/// callback path can access the `consumed` flag without taking the mutex.
+/// Backing storage for `SyncCompletion`.
 struct SyncCompletionInner<T> {
-    /// Atomic guard that ensures `Arc::from_raw` is invoked at most once per
-    /// context pointer. Set to `true` on the first completion callback;
-    /// subsequent (erroneous) callbacks see `true` and bail out without
-    /// touching the `Arc`, preventing the double-`from_raw` UAF/double-free.
+    /// Rejects a duplicate callback only while this allocation is still live.
+    /// Reading the flag already requires dereferencing the raw context, so it
+    /// cannot validate dangling or reused pointers.
     consumed: AtomicBool,
     state: Mutex<SyncCompletionState<T>>,
     cvar: Condvar,
@@ -57,10 +55,10 @@ struct SyncCompletionInner<T> {
 ///
 /// This type provides a way to block until an async callback completes
 /// and retrieve the result. It uses `Arc<...>` internally for thread-safe
-/// signaling between the callback and the waiting thread, with an
-/// `AtomicBool` guard that defends against Swift firing the completion
-/// callback more than once (which would otherwise be use-after-free in
-/// `Arc::from_raw`).
+/// signaling between the callback and the waiting thread. The raw context
+/// returned by [`Self::new`] is exact-live and one-shot; its atomic consumed
+/// flag can only diagnose a duplicate callback while the allocation remains
+/// live.
 pub struct SyncCompletion<T> {
     inner: Arc<SyncCompletionInner<T>>,
 }
@@ -121,8 +119,9 @@ impl<T> SyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `SyncCompletion::new()`.
-    /// This function consumes the Arc reference, so it must only be called once per context.
+    /// `context` must be the exact live pointer returned by
+    /// [`SyncCompletion::new`]. This consumes the callback-owned `Arc`
+    /// reference and must be invoked exactly once for that context.
     pub unsafe fn complete_ok(context: SyncCompletionPtr, value: T) {
         Self::complete_with_result(context, Ok(value));
     }
@@ -131,8 +130,9 @@ impl<T> SyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `SyncCompletion::new()`.
-    /// This function consumes the Arc reference, so it must only be called once per context.
+    /// `context` must be the exact live pointer returned by
+    /// [`SyncCompletion::new`]. This consumes the callback-owned `Arc`
+    /// reference and must be invoked exactly once for that context.
     pub unsafe fn complete_err(context: SyncCompletionPtr, error: String) {
         Self::complete_with_result(context, Err(error));
     }
@@ -141,32 +141,15 @@ impl<T> SyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from
-    /// `SyncCompletion::new()` and not yet freed. The intended FFI
-    /// contract is that the callback fires exactly once per context.
+    /// `context` must be the exact pointer returned by
+    /// [`SyncCompletion::new`], its allocation must remain live for this
+    /// entire call, and foreign code must invoke this completion exactly
+    /// once and never use the pointer afterward.
     ///
-    /// The `consumed` `AtomicBool` provides **defence in depth** against
-    /// Swift firing the callback twice on the same *still-live* context:
-    /// the second invocation atomically observes `consumed == true` and
-    /// returns without touching the `Arc`, preventing the
-    /// double-`Arc::from_raw` that would otherwise corrupt the refcount.
-    ///
-    /// **Limitation**: this guard does **not** protect against the
-    /// pathological case where (a) the legitimate callback completed
-    /// fully, (b) the corresponding `SyncCompletion` was dropped (so the
-    /// inner allocation was freed), and (c) Swift then fires the
-    /// callback a third time with the same now-dangling pointer. The
-    /// initial `&*context.cast::<...>()` deref in that case is
-    /// use-after-free. Defending against that scenario would require
-    /// either a process-wide allocator (so freed pointers are never
-    /// reused) or an indirection through a registry — both beyond the
-    /// scope of this guard. Fortunately Apple's `ScreenCaptureKit`
-    /// callbacks do not exhibit this pattern in practice; this `# Safety`
-    /// note documents the residual contract for future maintainers.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
+    /// The `consumed` flag is only defence in depth for a duplicate call
+    /// while the allocation is still live. Checking that flag itself
+    /// dereferences `context`; it does not make an already-freed, reused,
+    /// or concurrently invalidated pointer safe.
     pub unsafe fn complete_with_result(context: SyncCompletionPtr, result: Result<T, String>) {
         if context.is_null() {
             return;
@@ -215,8 +198,8 @@ struct AsyncCompletionState<T> {
 }
 
 /// Backing storage for `AsyncCompletion` — held behind an `Arc`. The
-/// `consumed` flag protects against Swift double-firing the completion
-/// callback (see `SyncCompletionInner` for the same rationale).
+/// `consumed` flag has the same live-allocation limitation documented on
+/// `SyncCompletionInner`.
 struct AsyncCompletionInner<T> {
     consumed: AtomicBool,
     state: Mutex<AsyncCompletionState<T>>,
@@ -226,6 +209,7 @@ struct AsyncCompletionInner<T> {
 ///
 /// This type provides a `Future` that resolves when an async callback completes.
 /// It uses `Arc<Mutex>` internally for thread-safe signaling and waker management.
+/// The raw context returned by [`Self::create`] is exact-live and one-shot.
 pub struct AsyncCompletion<T> {
     _marker: std::marker::PhantomData<T>,
 }
@@ -258,8 +242,9 @@ impl<T> AsyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::create()`.
-    /// This function consumes the Arc reference, so it must only be called once per context.
+    /// `context` must be the exact live pointer returned by
+    /// [`AsyncCompletion::create`]. This consumes the callback-owned `Arc`
+    /// reference and must be invoked exactly once for that context.
     pub unsafe fn complete_ok(context: SyncCompletionPtr, value: T) {
         Self::complete_with_result(context, Ok(value));
     }
@@ -268,8 +253,9 @@ impl<T> AsyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from `AsyncCompletion::create()`.
-    /// This function consumes the Arc reference, so it must only be called once per context.
+    /// `context` must be the exact live pointer returned by
+    /// [`AsyncCompletion::create`]. This consumes the callback-owned `Arc`
+    /// reference and must be invoked exactly once for that context.
     pub unsafe fn complete_err(context: SyncCompletionPtr, error: String) {
         Self::complete_with_result(context, Err(error));
     }
@@ -278,21 +264,14 @@ impl<T> AsyncCompletion<T> {
     ///
     /// # Safety
     ///
-    /// The `context` pointer must be a valid pointer obtained from
-    /// `AsyncCompletion::create()` and not yet freed. The intended FFI
-    /// contract is that the callback fires exactly once per context.
+    /// `context` must be the exact pointer returned by
+    /// [`AsyncCompletion::create`], its allocation must remain live for
+    /// this entire call, and foreign code must invoke this completion
+    /// exactly once and never use the pointer afterward.
     ///
-    /// The `consumed` `AtomicBool` provides defence in depth against
-    /// Swift firing the callback twice on the same *still-live*
-    /// allocation. The same residual UAF contract documented on
-    /// `SyncCompletion::complete_with_result` applies here: a third
-    /// callback after both the legitimate fire AND the consumer's drop
-    /// of the `AsyncCompletionFuture` would dereference a freed
-    /// pointer. Apple's APIs do not exhibit that pattern.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
+    /// The `consumed` flag only rejects a duplicate call while the
+    /// allocation is still live. It cannot validate an already-freed,
+    /// reused, or concurrently invalidated pointer.
     pub unsafe fn complete_with_result(context: SyncCompletionPtr, result: Result<T, String>) {
         if context.is_null() {
             return;
@@ -370,7 +349,7 @@ impl<T> Future for AsyncCompletionFuture<T> {
 ///
 /// The `msg` pointer must be either null or point to a valid null-terminated C string.
 #[must_use]
-pub unsafe fn error_from_cstr(msg: *const i8) -> String {
+pub unsafe fn error_from_cstr(msg: *const c_char) -> String {
     if msg.is_null() {
         "Unknown error".to_string()
     } else {
@@ -386,13 +365,24 @@ pub type UnitCompletion = SyncCompletion<()>;
 impl UnitCompletion {
     /// C callback for operations that return (context, success, `error_msg`)
     ///
-    /// This can be used directly as an FFI callback function.
+    /// This can be used directly wherever a
+    /// [`crate::ffi_callbacks::UnitCompletionCallback`] is required.
     ///
     /// The body is wrapped in [`catch_user_panic`] so that a mutex-poison
     /// panic (or any other unexpected panic) does not unwind across the
     /// `extern "C"` boundary, which would be undefined behaviour.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn callback(context: *mut c_void, success: bool, msg: *const i8) {
+    ///
+    /// # Safety
+    ///
+    /// `context` must be the exact live pointer returned with this
+    /// `UnitCompletion`, must be invoked exactly once, and must not be used
+    /// after this call. The internal atomic flag does not protect storage
+    /// that has already been freed or concurrently invalidated.
+    ///
+    /// When `success` is `false`, `msg` must be null or point to a valid
+    /// NUL-terminated C string for the duration of this call. It is ignored
+    /// when `success` is `true`.
+    pub unsafe extern "C" fn callback(context: *mut c_void, success: bool, msg: *const c_char) {
         catch_user_panic("UnitCompletion::callback", || {
             if success {
                 unsafe { Self::complete_ok(context, ()) };
@@ -401,5 +391,27 @@ impl UnitCompletion {
                 unsafe { Self::complete_err(context, error) };
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use super::UnitCompletion;
+
+    #[test]
+    fn unit_completion_callback_matches_shared_alias() {
+        let callback: crate::ffi_callbacks::UnitCompletionCallback = UnitCompletion::callback;
+        let _ = callback;
+    }
+
+    #[test]
+    fn unit_completion_callback_completes_successfully() {
+        let (completion, context) = UnitCompletion::new();
+
+        unsafe { UnitCompletion::callback(context, true, ptr::null()) };
+
+        assert_eq!(completion.wait(), Ok(()));
     }
 }

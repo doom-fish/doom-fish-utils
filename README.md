@@ -7,11 +7,11 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 | Module | Purpose |
 |--------|---------|
-| [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Provides `AsyncCompletion<T>` and `SyncCompletion<T>` with `AtomicBool` double-fire guards. |
-| [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
+| [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Raw completion contexts are exact-live and one-shot; duplicate guards only apply while their allocation remains live. |
+| [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared unsafe `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `UnitCompletionCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
-| [`panic_safe`](src/panic_safe.rs) | `catch_user_panic(...)` wrapper for `extern "C"` callbacks so a Rust panic doesn't unwind into Swift / C code. |
+| [`panic_safe`](src/panic_safe.rs) | Callback/panic-payload containment plus `catch_user_panic_result_with_cleanup(...)`, which runs explicit cleanup before best-effort destruction phases. |
 | [`spsc`](src/spsc.rs) | `SpscRing<T, N>` — lock-free, bounded single-producer/single-consumer ring for real-time callback threads feeding async consumers. |
 | [`stream`](src/stream.rs) | `BoundedAsyncStream<T>` — executor-agnostic, bounded, lossy-by-default async stream lifted from the screencapturekit-rs `AsyncSCStream` pattern. Generic over any item type. |
 
@@ -19,12 +19,15 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 - **Executor-agnostic.** No tokio / async-std / smol dependencies; works
   anywhere `std::future::Future` works.
-- **Defence in depth.** The async completion path uses an `AtomicBool`
-  `consumed` flag to prevent double-fire UAF in the face of misbehaving
-  Swift callbacks.
+- **Defence in depth.** Completion contexts are exact-live and one-shot.
+  Their `AtomicBool` flags reject duplicates only while the backing
+  allocation remains live; they do not validate dangling raw pointers.
 - **Panic-safe.** `extern "C"` callbacks pass through `panic_safe`
-  wrappers so an unexpected Rust panic logs and returns rather than
-  unwinding into Swift / C code.
+  wrappers so supported callback panics log and return rather than
+  unwinding into Swift / C code. Potentially panicking teardown state
+  uses an explicit cleanup body before opaque values are destroyed.
+  Multiple destructor panics within one aggregate remain process-aborting
+  and are outside the helpers' contract.
 
 ## Optional features
 
@@ -35,8 +38,8 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 ## Stability
 
 This crate is the foundation of every doom-fish Apple-SDK binding crate.
-Breaking changes ship as major version bumps; minor versions add modules
-or non-breaking helpers.
+Before 1.0, breaking changes advance the minor version; after 1.0, they
+advance the major version. Patch releases remain backward compatible.
 
 ## License
 

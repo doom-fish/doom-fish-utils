@@ -19,6 +19,14 @@ pub type JsonCallback = unsafe extern "C" fn(json: *mut c_char, user_data: *mut 
 pub type AsyncCallback =
     unsafe extern "C" fn(status: i32, error: *mut c_char, user_data: *mut c_void);
 
+/// One-shot unit completion callback used by [`crate::completion::UnitCompletion`].
+///
+/// `context` must remain the exact live context pointer for the callback's
+/// single invocation. `error` may be null and is only read when `success` is
+/// false.
+pub type UnitCompletionCallback =
+    unsafe extern "C" fn(context: *mut c_void, success: bool, error: *const c_char);
+
 /// Fire-and-forget callback with no payload other than the `user_data` pointer.
 pub type SimpleCallback = unsafe extern "C" fn(user_data: *mut c_void);
 

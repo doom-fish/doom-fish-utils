@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.4.0] - 2026-09-07
+
+### Changed (breaking)
+
+- `UnitCompletion::callback` is now an `unsafe extern "C" fn`. Its ABI and
+  argument order are unchanged, but Rust callback slots declared as safe
+  `extern "C" fn` must migrate to an unsafe function pointer. Added the
+  matching `ffi_callbacks::UnitCompletionCallback` alias.
+- Completion context documentation now states the exact-live, exactly-once
+  contract explicitly. The consumed atomic only rejects duplicates while the
+  backing allocation remains live and does not make dangling storage safe.
+
+### Added
+
+- `panic_safe::catch_user_panic_result<R, F>(site, f) -> Option<R>` for
+  result-returning extern callbacks. It shares callback, diagnostic, and
+  panic-payload destruction containment with `catch_user_panic`; callers map
+  `None` to their ABI-safe fallback.
+- `panic_safe::catch_user_panic_result_with_cleanup<S, R, F, C>(
+  site, state, f, cleanup) -> Option<R>`, where `F: FnMut(&mut S) -> R` and
+  `C: FnMut(&mut S)`. It runs the cleanup body immediately after the callback
+  boundary, before best-effort destruction of the callback closure, cleanup
+  closure, and state. It returns `None` if any catchable protected phase
+  panics.
+
+### Fixed
+
+- `BoundedAsyncStream` now guards buffer fullness, consumer lifetime, sender
+  count, and condition-variable waits with one state mutex. Every consumer
+  drain path and consumer drop notifies blocked producers without a
+  check/wait lost-wakeup window. Wakers and overwritten or cleared user items
+  are released after unlocking, and poisoned state no longer appears as a
+  successful push or normal stream close.
+- `catch_user_panic` now contains callback, diagnostic, and panic-payload
+  destruction failures without claiming it can recover from Rust's
+  process-aborting double-panic case. All opaque callback, cleanup, state,
+  result, and payload aggregates must follow the standard rule that their
+  destruction does not produce multiple panics.
+- Fixed the `futures-stream` SPSC test imports for `poll_fn` and `Pin`.
+
 ## [0.3.2] - 2026-05-20
 
 ### Added

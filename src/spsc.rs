@@ -5,7 +5,7 @@
 //! ring has been constructed.
 //!
 //! Internally this wrapper uses a pre-allocated bounded queue plus an
-//! [`AtomicWaker`](futures_util::task::AtomicWaker) so the consumer can await
+//! [`AtomicWaker`] so the consumer can await
 //! the next item without forcing the producer to block.
 //!
 //! # Example
@@ -268,7 +268,10 @@ impl<T, const N: usize> futures_core::Stream for SpscConsumerStream<'_, T, N> {
 
 #[cfg(test)]
 mod tests {
-
+    #[cfg(feature = "futures-stream")]
+    use std::future::poll_fn;
+    #[cfg(feature = "futures-stream")]
+    use std::pin::Pin;
     use std::thread;
     use std::time::{Duration, Instant};
 

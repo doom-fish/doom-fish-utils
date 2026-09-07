@@ -8,10 +8,10 @@
 //! | Module | Purpose |
 //! |--------|---------|
 //! | [`completion`] | Sync and async completion handlers for FFI callbacks |
-//! | [`ffi_callbacks`] | Common `extern "C"` callback type aliases shared across bridge crates |
+//! | [`ffi_callbacks`] | Common unsafe `extern "C"` callback type aliases shared across bridge crates |
 //! | [`ffi_string`] | Owned-string helpers around heap-allocated C strings |
 //! | [`four_char_code`] | `FourCharCode` wrapper (used by pixel formats, `OSType` codes, etc.) |
-//! | [`panic_safe`] | Catches panics inside `extern "C"` callbacks so they don't unwind across the FFI boundary |
+//! | [`panic_safe`] | Contains supported callback and panic-payload failures, with explicit cleanup before best-effort destruction |
 //! | [`spsc`] | Lock-free single-producer single-consumer rings for real-time callback → async-consumer handoff |
 //! | [`stream`] | Executor-agnostic bounded async streams (waker + `VecDeque` + lossy oldest-drop policy) |
 //!
@@ -19,12 +19,12 @@
 //!
 //! - **Executor-agnostic.** No tokio / async-std / smol dependencies; works
 //!   anywhere `std::future::Future` works.
-//! - **Defence in depth.** The async completion path uses an `AtomicBool`
-//!   `consumed` flag to prevent double-fire UAF in the face of misbehaving
-//!   Swift callbacks.
+//! - **Defence in depth.** Completion contexts are exact-live and one-shot.
+//!   Their atomic consumed flags only reject duplicates while the backing
+//!   allocation remains live; they do not validate dangling raw pointers.
 //! - **Panic-safe.** `extern "C"` callbacks pass through [`panic_safe`]
-//!   wrappers so an unexpected Rust panic logs and returns rather than
-//!   unwinding into Swift / C code.
+//!   wrappers. Explicit cleanup runs before opaque destruction; multiple
+//!   destructor panics within one aggregate remain outside the contract.
 //!
 //! ## Stability
 //!
