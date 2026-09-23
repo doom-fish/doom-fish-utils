@@ -1,8 +1,13 @@
 //! Single-producer single-consumer lock-free bounded ring buffer.
 //!
 //! Designed for the `CoreAudio` render-thread → async-consumer producer-consumer
-//! pattern. The producer path never takes a mutex and never allocates after the
-//! ring has been constructed.
+//! pattern. The ring itself never takes a mutex and never allocates after it
+//! has been constructed. Pushing an item or dropping the producer wakes the
+//! consumer's registered waker on the producer thread, though, and that runs
+//! executor code that may lock, allocate or make a system call. If the
+//! producer must stay lock-free, have the consumer poll with
+//! [`SpscConsumer::pop`] rather than await [`SpscConsumer::pop_async`], so that
+//! no waker is registered.
 //!
 //! Internally this wrapper uses a pre-allocated bounded queue plus an
 //! [`AtomicWaker`] so the consumer can await
