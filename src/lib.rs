@@ -7,6 +7,7 @@
 //!
 //! | Module | Purpose |
 //! |--------|---------|
+//! | [`callback_context`] | Reference-counted callback contexts: `RETAIN`/`RELEASE` trampolines for the foreign owner, a deactivation flag checked before every call, and panic containment |
 //! | [`completion`] | Sync and async completion handlers for FFI callbacks |
 //! | [`ffi_callbacks`] | Common unsafe `extern "C"` callback type aliases shared across bridge crates |
 //! | [`ffi_string`] | Owned-string helpers around heap-allocated C strings |
@@ -35,6 +36,7 @@
 #![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.3.0")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod callback_context;
 pub mod completion;
 pub mod ffi_callbacks;
 pub mod ffi_string;

@@ -7,6 +7,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 | Module | Purpose |
 |--------|---------|
+| [`callback_context`](src/callback_context.rs) | `CallbackContext<T>` — reference-counted context for delegate, observer and stream callbacks: the foreign owner holds its reference through the `RETAIN`/`RELEASE` trampolines, `with` skips deactivated contexts and contains panics, and dropping the Rust handle deactivates the context. |
 | [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Raw completion contexts are exact-live and one-shot; duplicate guards only apply while their allocation remains live. |
 | [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared unsafe `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `UnitCompletionCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
