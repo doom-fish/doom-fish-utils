@@ -9,7 +9,7 @@ description = "Framework-agnostic FFI utilities shared by the doom-fish Apple-SD
 authors = ["Per Johansson <per@doom.fish>"]
 keywords = ["macos", "ffi", "apple", "async", "doom-fish"]
 categories = ["api-bindings", "asynchronous", "os::macos-apis"]
-rust-version = "1.76"
+rust-version = "1.82"
 readme = "README.md"
 include = [
     "src/**/*",
