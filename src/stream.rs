@@ -56,7 +56,8 @@ use std::task::{Context, Poll, Waker};
 /// every [`AsyncStreamSender`] producer.
 struct State<T> {
     buffer: VecDeque<T>,
-    waker: Option<Waker>,
+    waiters: Vec<(u64, Waker)>,
+    next_waiter: u64,
     /// Set to `true` when every sender has been dropped. The consumer's
     /// `next()` then returns `None` once the buffer drains.
     closed: bool,
@@ -66,6 +67,54 @@ struct State<T> {
     sender_count: usize,
     #[cfg(test)]
     blocked_producers: usize,
+}
+
+#[cfg(feature = "futures-stream")]
+const STREAM_WAITER: u64 = 0;
+
+impl<T> State<T> {
+    fn register_waiter(
+        &mut self,
+        waiter: &mut Option<u64>,
+        current: &Waker,
+        next_waker: &mut Option<Waker>,
+    ) -> Option<Waker> {
+        let id = *waiter.get_or_insert_with(|| {
+            let id = self.next_waiter;
+            self.next_waiter = id.wrapping_add(1).max(1);
+            id
+        });
+        match self
+            .waiters
+            .iter_mut()
+            .find(|(registered, _)| *registered == id)
+        {
+            Some((_, existing)) if existing.will_wake(current) => None,
+            Some((_, existing)) => next_waker
+                .take()
+                .map(|waker| std::mem::replace(existing, waker)),
+            None => {
+                self.waiters
+                    .extend(next_waker.take().map(|waker| (id, waker)));
+                None
+            }
+        }
+    }
+
+    fn remove_waiter(&mut self, waiter: Option<u64>) -> Option<Waker> {
+        let waiter = waiter?;
+        let index = self
+            .waiters
+            .iter()
+            .position(|(registered, _)| *registered == waiter)?;
+        Some(self.waiters.swap_remove(index).1)
+    }
+}
+
+fn wake_waiters(waiters: Vec<(u64, Waker)>) {
+    for (_, waker) in waiters {
+        waker.wake();
+    }
 }
 
 struct Shared<T> {
@@ -175,7 +224,8 @@ impl<T> BoundedAsyncStream<T> {
             capacity_available: Condvar::new(),
             state: Mutex::new(State {
                 buffer: VecDeque::with_capacity(capacity),
-                waker: None,
+                waiters: Vec::new(),
+                next_waiter: 1,
                 closed: false,
                 consumer_gone: false,
                 sender_count: 1,
@@ -195,7 +245,10 @@ impl<T> BoundedAsyncStream<T> {
     /// stream is closed and drained.
     #[must_use]
     pub const fn next(&self) -> NextItem<'_, T> {
-        NextItem { stream: self }
+        NextItem {
+            stream: self,
+            waiter: None,
+        }
     }
 
     /// Non-blocking pop. Returns `None` if the buffer is empty (regardless
@@ -258,22 +311,23 @@ impl<T> BoundedAsyncStream<T> {
         drop(cleared);
     }
 
-    fn poll_next_item(&self, cx: &Context<'_>) -> Poll<Option<T>> {
+    fn poll_next_item(&self, cx: &Context<'_>, waiter: &mut Option<u64>) -> Poll<Option<T>> {
         let mut next_waker = Some(cx.waker().clone());
-        let (result, replaced_waker, made_room) = {
+        let (result, released_waker, made_room) = {
             let mut state = self.shared.lock_state();
 
             let outcome = match state.buffer.pop_front() {
-                Some(item) => (Poll::Ready(Some(item)), None, true),
-                None if state.closed => (Poll::Ready(None), None, false),
+                Some(item) => (
+                    Poll::Ready(Some(item)),
+                    state.remove_waiter(waiter.take()),
+                    true,
+                ),
+                None if state.closed => {
+                    (Poll::Ready(None), state.remove_waiter(waiter.take()), false)
+                }
                 None => {
-                    let replaced_waker = match state.waker.as_ref() {
-                        Some(existing) if existing.will_wake(cx.waker()) => None,
-                        _ => state
-                            .waker
-                            .replace(next_waker.take().expect("next waker present")),
-                    };
-                    (Poll::Pending, replaced_waker, false)
+                    let released = state.register_waiter(waiter, cx.waker(), &mut next_waker);
+                    (Poll::Pending, released, false)
                 }
             };
             drop(state);
@@ -281,7 +335,7 @@ impl<T> BoundedAsyncStream<T> {
         };
 
         drop(next_waker);
-        drop(replaced_waker);
+        drop(released_waker);
         if made_room {
             self.shared.capacity_available.notify_one();
         }
@@ -291,13 +345,13 @@ impl<T> BoundedAsyncStream<T> {
 
 impl<T> Drop for BoundedAsyncStream<T> {
     fn drop(&mut self) {
-        let stale_waker = {
+        let stale_wakers = {
             let mut state = self.shared.lock_state_for_drop();
             state.consumer_gone = true;
-            state.waker.take()
+            std::mem::take(&mut state.waiters)
         };
         self.shared.capacity_available.notify_all();
-        drop(stale_waker);
+        drop(stale_wakers);
     }
 }
 
@@ -309,7 +363,7 @@ impl<T> AsyncStreamSender<T> {
     ///
     /// Panics if the shared state mutex is poisoned.
     pub fn push(&self, item: T) {
-        let (overwritten, waker) = {
+        let (overwritten, waiters) = {
             let mut state = self.shared.lock_state();
             let overwritten = if state.buffer.len() >= self.shared.capacity {
                 state.buffer.pop_front()
@@ -317,12 +371,10 @@ impl<T> AsyncStreamSender<T> {
                 None
             };
             state.buffer.push_back(item);
-            (overwritten, state.waker.take())
+            (overwritten, std::mem::take(&mut state.waiters))
         };
 
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        wake_waiters(waiters);
         drop(overwritten);
     }
 
@@ -369,12 +421,10 @@ impl<T> AsyncStreamSender<T> {
         }
 
         state.buffer.push_back(item);
-        let waker = state.waker.take();
+        let waiters = std::mem::take(&mut state.waiters);
         drop(state);
 
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        wake_waiters(waiters);
         Ok(())
     }
 
@@ -401,26 +451,25 @@ impl<T> AsyncStreamSender<T> {
 
 impl<T> Drop for AsyncStreamSender<T> {
     fn drop(&mut self) {
-        let waker = {
+        let waiters = {
             let mut state = self.shared.lock_state_for_drop();
             state.sender_count -= 1;
             if state.sender_count == 0 {
                 state.closed = true;
-                state.waker.take()
+                std::mem::take(&mut state.waiters)
             } else {
-                None
+                Vec::new()
             }
         };
 
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        wake_waiters(waiters);
     }
 }
 
 /// Future returned by [`BoundedAsyncStream::next`].
 pub struct NextItem<'a, T> {
     stream: &'a BoundedAsyncStream<T>,
+    waiter: Option<u64>,
 }
 
 impl<T> fmt::Debug for NextItem<'_, T> {
@@ -433,7 +482,20 @@ impl<T> Future for NextItem<'_, T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.stream.poll_next_item(cx)
+        let this = self.get_mut();
+        this.stream.poll_next_item(cx, &mut this.waiter)
+    }
+}
+
+impl<T> Drop for NextItem<'_, T> {
+    fn drop(&mut self) {
+        if self.waiter.is_some() {
+            let released = {
+                let mut state = self.stream.shared.lock_state_for_drop();
+                state.remove_waiter(self.waiter.take())
+            };
+            drop(released);
+        }
     }
 }
 
@@ -442,7 +504,7 @@ impl<T: 'static> futures_core::Stream for BoundedAsyncStream<T> {
     type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
-        self.poll_next_item(cx)
+        self.poll_next_item(cx, &mut Some(STREAM_WAITER))
     }
 }
 
@@ -679,5 +741,139 @@ mod tests {
         assert!(catch_unwind(AssertUnwindSafe(|| sender.push(1))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| stream.try_next())).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| pollster::block_on(stream.next()))).is_err());
+    }
+
+    #[derive(Default)]
+    struct CountingWake(AtomicUsize);
+
+    impl Wake for CountingWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn counting_waker() -> (Arc<CountingWake>, Waker) {
+        let probe = Arc::new(CountingWake::default());
+        let waker = Waker::from(Arc::clone(&probe));
+        (probe, waker)
+    }
+
+    fn poll_once<F: Future + Unpin>(future: &mut F, waker: &Waker) -> Poll<F::Output> {
+        Pin::new(future).poll(&mut Context::from_waker(waker))
+    }
+
+    #[test]
+    fn every_waiting_consumer_is_woken() {
+        let (stream, sender) = BoundedAsyncStream::new(4);
+        let (first_probe, first_waker) = counting_waker();
+        let (second_probe, second_waker) = counting_waker();
+        let mut first = stream.next();
+        let mut second = stream.next();
+
+        assert_eq!(poll_once(&mut first, &first_waker), Poll::Pending);
+        assert_eq!(poll_once(&mut second, &second_waker), Poll::Pending);
+
+        sender.push(1);
+        assert_eq!(first_probe.0.load(Ordering::SeqCst), 1);
+        assert_eq!(second_probe.0.load(Ordering::SeqCst), 1);
+
+        assert_eq!(poll_once(&mut second, &second_waker), Poll::Ready(Some(1)));
+        assert_eq!(poll_once(&mut first, &first_waker), Poll::Pending);
+
+        drop(sender);
+        assert_eq!(first_probe.0.load(Ordering::SeqCst), 2);
+        assert_eq!(second_probe.0.load(Ordering::SeqCst), 1);
+        assert_eq!(poll_once(&mut first, &first_waker), Poll::Ready(None));
+    }
+
+    #[test]
+    fn dropped_next_future_releases_its_waker() {
+        let (stream, sender) = BoundedAsyncStream::<u32>::new(1);
+        let (first_probe, first_waker) = counting_waker();
+        let (second_probe, second_waker) = counting_waker();
+        let mut first = stream.next();
+        let mut second = stream.next();
+
+        for _ in 0..3 {
+            assert_eq!(poll_once(&mut first, &first_waker), Poll::Pending);
+        }
+        assert_eq!(poll_once(&mut second, &second_waker), Poll::Pending);
+        assert_eq!(stream.shared.lock_state().waiters.len(), 2);
+
+        drop(first);
+        assert_eq!(stream.shared.lock_state().waiters.len(), 1);
+        drop(first_waker);
+        assert_eq!(Arc::strong_count(&first_probe), 1);
+
+        sender.push(5);
+        assert_eq!(first_probe.0.load(Ordering::SeqCst), 0);
+        assert_eq!(second_probe.0.load(Ordering::SeqCst), 1);
+        assert_eq!(poll_once(&mut second, &second_waker), Poll::Ready(Some(5)));
+        drop(second);
+        assert!(stream.shared.lock_state().waiters.is_empty());
+    }
+
+    #[test]
+    fn concurrent_consumers_drain_every_item() {
+        const CONSUMERS: usize = 4;
+        const ITEMS: usize = 2_000;
+
+        let (stream, sender) = BoundedAsyncStream::<usize>::new(4);
+        let stream = Arc::new(stream);
+        let (done_tx, done_rx) = mpsc::channel();
+        let consumers = (0..CONSUMERS)
+            .map(|_| {
+                let stream = Arc::clone(&stream);
+                let done_tx = done_tx.clone();
+                thread::spawn(move || {
+                    let mut received = 0;
+                    while pollster::block_on(stream.next()).is_some() {
+                        received += 1;
+                    }
+                    done_tx.send(received).unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for item in 0..ITEMS {
+            assert_eq!(sender.push_or_block(item), Ok(()));
+        }
+        drop(sender);
+
+        let received: usize = (0..CONSUMERS)
+            .map(|_| done_rx.recv_timeout(TEST_TIMEOUT).expect("a consumer hung"))
+            .sum();
+        assert_eq!(received, ITEMS);
+        for consumer in consumers {
+            consumer.join().unwrap();
+        }
+    }
+
+    #[cfg(feature = "futures-stream")]
+    #[test]
+    fn stream_poll_keeps_a_single_registration() {
+        let (mut stream, sender) = BoundedAsyncStream::<u32>::new(1);
+        let (first_probe, first_waker) = counting_waker();
+        let (second_probe, second_waker) = counting_waker();
+
+        let mut first_cx = Context::from_waker(&first_waker);
+        assert_eq!(
+            Pin::new(&mut stream).poll_next(&mut first_cx),
+            Poll::Pending
+        );
+        let mut second_cx = Context::from_waker(&second_waker);
+        assert_eq!(
+            Pin::new(&mut stream).poll_next(&mut second_cx),
+            Poll::Pending
+        );
+        assert_eq!(stream.shared.lock_state().waiters.len(), 1);
+
+        sender.push(3);
+        assert_eq!(first_probe.0.load(Ordering::SeqCst), 0);
+        assert_eq!(second_probe.0.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            Pin::new(&mut stream).poll_next(&mut second_cx),
+            Poll::Ready(Some(3))
+        );
     }
 }
