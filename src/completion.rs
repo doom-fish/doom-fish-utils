@@ -22,8 +22,9 @@ use std::ffi::{c_char, c_void, CStr};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use crate::panic_safe::catch_user_panic;
 
@@ -90,29 +91,49 @@ impl<T> SyncCompletion<T> {
     /// # Errors
     ///
     /// Returns an error string if the callback signaled an error.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal mutex is poisoned.
     pub fn wait(self) -> Result<T, String> {
         let mut state = self
             .inner
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Use Condvar::wait_while to handle spurious wakeups in a single
-        // expression. The predicate returns true while we should keep
-        // waiting (i.e. no result yet).
-        state = self
+            .unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(result) = state.result.take() {
+                return result;
+            }
+            state = self
+                .inner
+                .cvar
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    #[must_use]
+    pub fn wait_timeout(self, timeout: Duration) -> Option<Result<T, String>> {
+        let start = Instant::now();
+        let mut state = self
             .inner
-            .cvar
-            .wait_while(state, |s| s.result.is_none())
-            .unwrap();
-        // SAFETY: the predicate above guarantees `result.is_some()`.
-        state
-            .result
-            .take()
-            .expect("completion result missing despite signaled completion")
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(result) = state.result.take() {
+                return Some(result);
+            }
+            let remaining = timeout.checked_sub(start.elapsed())?;
+            state = self
+                .inner
+                .cvar
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    #[must_use]
+    pub fn context_ptr(&self) -> SyncCompletionPtr {
+        Arc::as_ptr(&self.inner).cast_mut().cast()
     }
 
     /// Signal successful completion with a value
@@ -120,8 +141,10 @@ impl<T> SyncCompletion<T> {
     /// # Safety
     ///
     /// `context` must be the exact live pointer returned by
-    /// [`SyncCompletion::new`]. This consumes the callback-owned `Arc`
-    /// reference and must be invoked exactly once for that context.
+    /// [`SyncCompletion::new`] or [`SyncCompletion::context_ptr`]. This
+    /// consumes the callback-owned `Arc` reference and must be invoked
+    /// exactly once for that context. `T` must be `Send` if this is called
+    /// on a thread other than the one that waits for the result.
     pub unsafe fn complete_ok(context: SyncCompletionPtr, value: T) {
         Self::complete_with_result(context, Ok(value));
     }
@@ -131,8 +154,10 @@ impl<T> SyncCompletion<T> {
     /// # Safety
     ///
     /// `context` must be the exact live pointer returned by
-    /// [`SyncCompletion::new`]. This consumes the callback-owned `Arc`
-    /// reference and must be invoked exactly once for that context.
+    /// [`SyncCompletion::new`] or [`SyncCompletion::context_ptr`]. This
+    /// consumes the callback-owned `Arc` reference and must be invoked
+    /// exactly once for that context. `T` must be `Send` if this is called
+    /// on a thread other than the one that waits for the result.
     pub unsafe fn complete_err(context: SyncCompletionPtr, error: String) {
         Self::complete_with_result(context, Err(error));
     }
@@ -142,9 +167,14 @@ impl<T> SyncCompletion<T> {
     /// # Safety
     ///
     /// `context` must be the exact pointer returned by
-    /// [`SyncCompletion::new`], its allocation must remain live for this
-    /// entire call, and foreign code must invoke this completion exactly
-    /// once and never use the pointer afterward.
+    /// [`SyncCompletion::new`] or [`SyncCompletion::context_ptr`], its
+    /// allocation must remain live for this entire call, and foreign code
+    /// must invoke this completion exactly once and never use the pointer
+    /// afterward.
+    ///
+    /// `T` must be `Send` if this is called on a thread other than the one
+    /// that waits for the result: the value moves to the waiting thread, and
+    /// it is dropped on the calling thread if the waiter has already gone.
     ///
     /// The `consumed` flag is only defence in depth for a duplicate call
     /// while the allocation is still live. Checking that flag itself
@@ -244,7 +274,9 @@ impl<T> AsyncCompletion<T> {
     ///
     /// `context` must be the exact live pointer returned by
     /// [`AsyncCompletion::create`]. This consumes the callback-owned `Arc`
-    /// reference and must be invoked exactly once for that context.
+    /// reference and must be invoked exactly once for that context. `T` must
+    /// be `Send` if this is called on a thread other than the one that polls
+    /// the future.
     pub unsafe fn complete_ok(context: SyncCompletionPtr, value: T) {
         Self::complete_with_result(context, Ok(value));
     }
@@ -255,7 +287,9 @@ impl<T> AsyncCompletion<T> {
     ///
     /// `context` must be the exact live pointer returned by
     /// [`AsyncCompletion::create`]. This consumes the callback-owned `Arc`
-    /// reference and must be invoked exactly once for that context.
+    /// reference and must be invoked exactly once for that context. `T` must
+    /// be `Send` if this is called on a thread other than the one that polls
+    /// the future.
     pub unsafe fn complete_err(context: SyncCompletionPtr, error: String) {
         Self::complete_with_result(context, Err(error));
     }
@@ -268,6 +302,10 @@ impl<T> AsyncCompletion<T> {
     /// [`AsyncCompletion::create`], its allocation must remain live for
     /// this entire call, and foreign code must invoke this completion
     /// exactly once and never use the pointer afterward.
+    ///
+    /// `T` must be `Send` if this is called on a thread other than the one
+    /// that polls the future: the value moves to that thread, and it is
+    /// dropped on the calling thread if the future has already been dropped.
     ///
     /// The `consumed` flag only rejects a duplicate call while the
     /// allocation is still live. It cannot validate an already-freed,
@@ -396,9 +434,16 @@ impl UnitCompletion {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
     use std::ptr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-    use super::UnitCompletion;
+    use super::{AsyncCompletion, SyncCompletion, UnitCompletion};
 
     #[test]
     fn unit_completion_callback_matches_shared_alias() {
@@ -413,5 +458,206 @@ mod tests {
         unsafe { UnitCompletion::callback(context, true, ptr::null()) };
 
         assert_eq!(completion.wait(), Ok(()));
+    }
+
+    #[test]
+    fn unit_completion_callback_reports_errors() {
+        let (completion, context) = UnitCompletion::new();
+
+        unsafe { UnitCompletion::callback(context, false, c"denied".as_ptr()) };
+
+        assert_eq!(completion.wait(), Err("denied".to_string()));
+    }
+
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn sync_completion_ignores_a_duplicate_callback() {
+        let (completion, context) = SyncCompletion::<u32>::new();
+
+        unsafe { SyncCompletion::<u32>::complete_ok(context, 1) };
+        unsafe { SyncCompletion::<u32>::complete_ok(context, 2) };
+
+        assert_eq!(completion.wait(), Ok(1));
+    }
+
+    #[test]
+    fn sync_completion_waits_for_another_thread() {
+        let (completion, context) = SyncCompletion::<String>::new();
+        let context = context as usize;
+
+        let callback = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            unsafe { SyncCompletion::<String>::complete_ok(context as *mut _, "done".to_string()) };
+        });
+
+        assert_eq!(completion.wait(), Ok("done".to_string()));
+        callback.join().unwrap();
+    }
+
+    #[test]
+    fn wait_timeout_returns_none_when_no_callback_arrives() {
+        let (completion, _context) = SyncCompletion::<u32>::new();
+        let timeout = Duration::from_millis(30);
+        let start = Instant::now();
+
+        assert_eq!(completion.wait_timeout(timeout), None);
+        assert!(start.elapsed() >= timeout);
+    }
+
+    #[test]
+    fn wait_timeout_returns_the_result() {
+        let (completion, context) = SyncCompletion::<u32>::new();
+        unsafe { SyncCompletion::<u32>::complete_err(context, "failed".to_string()) };
+
+        assert_eq!(
+            completion.wait_timeout(Duration::from_secs(5)),
+            Some(Err("failed".to_string()))
+        );
+
+        let (completion, context) = SyncCompletion::<u32>::new();
+        let context = context as usize;
+        let callback = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            unsafe { SyncCompletion::<u32>::complete_ok(context as *mut _, 9) };
+        });
+
+        assert_eq!(completion.wait_timeout(Duration::MAX), Some(Ok(9)));
+        callback.join().unwrap();
+    }
+
+    #[test]
+    fn late_callback_after_timeout_releases_the_value() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (completion, context) = SyncCompletion::<DropCounter>::new();
+
+        assert!(completion.wait_timeout(Duration::from_millis(1)).is_none());
+        unsafe {
+            SyncCompletion::<DropCounter>::complete_ok(context, DropCounter(Arc::clone(&drops)));
+        };
+
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn default_sync_completion_can_be_completed() {
+        let completion = SyncCompletion::<u32>::default();
+        let context = completion.context_ptr();
+
+        unsafe { SyncCompletion::<u32>::complete_ok(context, 5) };
+
+        assert_eq!(completion.wait(), Ok(5));
+
+        let (completion, context) = SyncCompletion::<u32>::new();
+        assert_eq!(completion.context_ptr(), context);
+        unsafe { SyncCompletion::<u32>::complete_ok(context, 6) };
+        assert_eq!(completion.wait(), Ok(6));
+    }
+
+    #[test]
+    fn wait_recovers_from_a_poisoned_lock() {
+        let (completion, context) = SyncCompletion::<u32>::new();
+        let inner = Arc::clone(&completion.inner);
+        assert!(thread::spawn(move || {
+            let _state = inner.state.lock().unwrap();
+            panic!("poison completion state");
+        })
+        .join()
+        .is_err());
+
+        unsafe { SyncCompletion::<u32>::complete_ok(context, 3) };
+
+        assert_eq!(completion.wait(), Ok(3));
+
+        let (completion, _context) = SyncCompletion::<u32>::new();
+        let inner = Arc::clone(&completion.inner);
+        assert!(thread::spawn(move || {
+            let _state = inner.state.lock().unwrap();
+            panic!("poison completion state");
+        })
+        .join()
+        .is_err());
+
+        assert_eq!(completion.wait_timeout(Duration::from_millis(1)), None);
+    }
+
+    #[derive(Default)]
+    struct CountingWake(AtomicUsize);
+
+    impl Wake for CountingWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn async_completion_resolves_with_the_value() {
+        let (future, context) = AsyncCompletion::<u32>::create();
+
+        unsafe { AsyncCompletion::<u32>::complete_ok(context, 42) };
+
+        assert_eq!(pollster::block_on(future), Ok(42));
+    }
+
+    #[test]
+    fn async_completion_wakes_a_pending_future() {
+        let (mut future, context) = AsyncCompletion::<u32>::create();
+        let probe = Arc::new(CountingWake::default());
+        let waker = Waker::from(Arc::clone(&probe));
+        let mut cx = Context::from_waker(&waker);
+
+        assert_eq!(Pin::new(&mut future).poll(&mut cx), Poll::Pending);
+
+        let context = context as usize;
+        thread::spawn(move || unsafe { AsyncCompletion::<u32>::complete_ok(context as *mut _, 8) })
+            .join()
+            .unwrap();
+
+        assert_eq!(probe.0.load(Ordering::SeqCst), 1);
+        assert_eq!(Pin::new(&mut future).poll(&mut cx), Poll::Ready(Ok(8)));
+    }
+
+    #[test]
+    fn async_completion_resolves_with_the_error() {
+        let (future, context) = AsyncCompletion::<u32>::create();
+
+        unsafe { AsyncCompletion::<u32>::complete_err(context, "denied".to_string()) };
+
+        assert_eq!(pollster::block_on(future), Err("denied".to_string()));
+    }
+
+    #[test]
+    fn async_completion_ignores_a_duplicate_callback() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (future, context) = AsyncCompletion::<DropCounter>::create();
+
+        unsafe {
+            AsyncCompletion::<DropCounter>::complete_ok(context, DropCounter(Arc::clone(&drops)));
+        };
+        unsafe { AsyncCompletion::<DropCounter>::complete_err(context, "duplicate".to_string()) };
+
+        let value = pollster::block_on(future).unwrap();
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+        drop(value);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dropped_async_future_releases_a_late_value() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let (future, context) = AsyncCompletion::<DropCounter>::create();
+        drop(future);
+
+        unsafe {
+            AsyncCompletion::<DropCounter>::complete_ok(context, DropCounter(Arc::clone(&drops)));
+        };
+
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 }
