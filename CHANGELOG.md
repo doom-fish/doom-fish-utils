@@ -1,5 +1,56 @@
 # Changelog
 
+All notable changes to `doom-fish-utils` are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.1] - Unreleased
+
+### Fixed
+
+- `spsc`: `pop_async` and `SpscConsumerStream` no longer lose an item that the
+  producer pushed just before it was dropped. After seeing the producer closed,
+  the consumer pops once more before reporting the end of the ring.
+- `stream`: `BoundedAsyncStream` keeps a waker for every waiting consumer and
+  wakes all of them on push and close, so several tasks awaiting `next()` on the
+  same stream no longer hang when one consumer's waker replaced another's. A
+  dropped `NextItem` future releases its waker.
+- `SyncCompletion::wait` no longer panics when the state mutex is poisoned.
+- `SyncCompletion::default()` could never complete, because its callback
+  context was unreachable. It can now be completed through
+  `SyncCompletion::context_ptr`.
+- The `complete_ok`, `complete_err` and `complete_with_result` safety docs of
+  `SyncCompletion` and `AsyncCompletion` now require `T: Send` when the callback
+  runs on another thread.
+- The `spsc` docs no longer claim that the producer never locks: pushing, or
+  dropping the producer, runs the consumer's registered waker on the producer
+  thread.
+- `html_root_url` now names this version (it still named 0.3.0).
+
+### Changed
+
+- `rust-version` is now 1.82 (was 1.76), the fleet baseline.
+- `FourCharCode::from_slice` is now a `const fn`.
+
+### Added
+
+- `callback_context::CallbackContext<T>` for delegate, observer and stream
+  callbacks that foreign code can invoke after the Rust owner has gone. It is
+  an `Arc` holding an active flag and the value. `as_ptr` identifies the
+  context, `retained_ptr` hands foreign code a +1 reference, and the `RETAIN` /
+  `RELEASE` associated `unsafe extern "C" fn` consts let the foreign owner take
+  and drop references; `RELEASE` frees the value at zero and contains a
+  panicking destructor. Trampolines call `CallbackContext::with(ptr, site, f)`,
+  which returns `None` without running `f` when the pointer is null or the
+  context is deactivated, and contains panics from `f`. Dropping the Rust
+  handle deactivates the context and releases the handle's own reference.
+- `SyncCompletion::wait_timeout(self, Duration) -> Option<Result<T, String>>`.
+  It returns `None` when the callback hasn't arrived in time; a callback that
+  arrives later still completes safely and frees its value.
+- `SyncCompletion::context_ptr(&self)`, the completion's callback context
+  pointer.
+
 ## [0.4.0] - 2026-09-07
 
 ### Changed (breaking)
@@ -40,6 +91,13 @@
   destruction does not produce multiple panics.
 - Fixed the `futures-stream` SPSC test imports for `poll_fn` and `Pin`.
 
+## [0.3.3] - 2026-06-06
+
+### Fixed
+
+- `AsyncCompletion` and `SyncCompletion` recover a poisoned state mutex in the
+  completion callback instead of panicking across the FFI boundary.
+
 ## [0.3.2] - 2026-05-20
 
 ### Added
@@ -60,11 +118,6 @@
 ## [0.2.1] - 2026-05-19
 
 - Bump MSRV from 1.70 to 1.76 to match fleet baseline.
-
-All notable changes to `doom-fish-utils` are documented here.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.0] — 2026-05-18
 
