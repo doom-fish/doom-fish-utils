@@ -43,7 +43,7 @@ impl FourCharCode {
 
     /// Create a `FourCharCode` from a byte slice
     #[must_use]
-    pub fn from_slice(bytes: &[u8]) -> Option<Self> {
+    pub const fn from_slice(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != 4 {
             return None;
         }
