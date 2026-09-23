@@ -132,3 +132,64 @@ impl fmt::Display for FourCharCode {
         write!(f, "{}", self.display())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FourCharCode;
+
+    #[test]
+    fn bytes_and_integers_round_trip() {
+        let code = FourCharCode::from_bytes(*b"avc1");
+
+        assert_eq!(code.as_u32(), 0x6176_6331);
+        assert_eq!(code.as_bytes(), *b"avc1");
+        assert_eq!(FourCharCode::from_u32(0x6176_6331), code);
+        assert_eq!(FourCharCode::from(0x6176_6331), code);
+        assert_eq!(u32::from(code), 0x6176_6331);
+        assert!(code.equals(FourCharCode::from_bytes(*b"avc1")));
+        assert!(!code.equals(FourCharCode::from_bytes(*b"hvc1")));
+    }
+
+    #[test]
+    fn from_slice_requires_exactly_four_bytes() {
+        assert_eq!(
+            FourCharCode::from_slice(b"BGRA"),
+            Some(FourCharCode::from_bytes(*b"BGRA"))
+        );
+        assert_eq!(FourCharCode::from_slice(b"BGR"), None);
+        assert_eq!(FourCharCode::from_slice(b"BGRA8"), None);
+        assert_eq!(FourCharCode::from_slice(&[]), None);
+    }
+
+    #[test]
+    fn parsing_rejects_wrong_lengths_and_non_ascii() {
+        assert_eq!(
+            "420v".parse::<FourCharCode>(),
+            Ok(FourCharCode::from_bytes(*b"420v"))
+        );
+        assert_eq!(
+            "BGR".parse::<FourCharCode>(),
+            Err("FourCharCode must be exactly 4 characters")
+        );
+        assert_eq!(
+            "BGRA8".parse::<FourCharCode>(),
+            Err("FourCharCode must be exactly 4 characters")
+        );
+        assert_eq!(
+            "ab\u{e9}".parse::<FourCharCode>(),
+            Err("FourCharCode must contain only ASCII characters")
+        );
+    }
+
+    #[test]
+    fn display_shows_the_code_characters() {
+        let code = FourCharCode::from_bytes(*b"lpcm");
+
+        assert_eq!(code.display(), "lpcm");
+        assert_eq!(code.to_string(), "lpcm");
+        assert_eq!(
+            FourCharCode::from_bytes([b'a', 0xff, b'b', b'c']).display(),
+            "a\u{fffd}bc"
+        );
+    }
+}

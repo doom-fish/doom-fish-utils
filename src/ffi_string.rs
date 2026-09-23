@@ -295,3 +295,89 @@ mod take_owned_tests {
         assert!(freed.get());
     }
 }
+
+#[cfg(test)]
+mod buffer_tests {
+    use super::{
+        ffi_string_from_buffer, ffi_string_from_buffer_or_empty, DEFAULT_BUFFER_SIZE,
+        SMALL_BUFFER_SIZE,
+    };
+
+    unsafe fn write_into(buffer: *mut i8, len: isize, bytes: &[u8]) -> bool {
+        if usize::try_from(len).map_or(true, |len| bytes.len() > len) {
+            return false;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer.cast::<u8>(), bytes.len()) };
+        true
+    }
+
+    #[test]
+    fn reads_a_string_through_the_stack_buffer() {
+        let result = unsafe {
+            ffi_string_from_buffer(SMALL_BUFFER_SIZE, |buffer, len| {
+                assert_eq!(usize::try_from(len), Ok(SMALL_BUFFER_SIZE));
+                write_into(buffer, len, b"device-1\0")
+            })
+        };
+
+        assert_eq!(result.as_deref(), Some("device-1"));
+    }
+
+    #[test]
+    fn reads_a_string_through_the_heap_buffer() {
+        let mut long = "x".repeat(600).into_bytes();
+        long.push(0);
+
+        let result = unsafe {
+            ffi_string_from_buffer(DEFAULT_BUFFER_SIZE, |buffer, len| {
+                assert_eq!(usize::try_from(len), Ok(DEFAULT_BUFFER_SIZE));
+                write_into(buffer, len, &long)
+            })
+        };
+
+        assert_eq!(result, Some("x".repeat(600)));
+    }
+
+    #[test]
+    fn failed_call_returns_none() {
+        assert_eq!(unsafe { ffi_string_from_buffer(64, |_, _| false) }, None);
+        assert_eq!(
+            unsafe { ffi_string_from_buffer_or_empty(64, |_, _| false) },
+            ""
+        );
+    }
+
+    #[test]
+    fn empty_string_returns_none() {
+        let result =
+            unsafe { ffi_string_from_buffer(64, |buffer, len| write_into(buffer, len, b"\0")) };
+        assert_eq!(result, None);
+
+        let result = unsafe {
+            ffi_string_from_buffer_or_empty(64, |buffer, len| write_into(buffer, len, b"\0"))
+        };
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn missing_terminator_returns_none() {
+        for size in [16, 512] {
+            let unterminated = vec![b'x'; size];
+            let result = unsafe {
+                ffi_string_from_buffer(size, |buffer, len| write_into(buffer, len, &unterminated))
+            };
+            assert_eq!(result, None, "buffer size {size}");
+        }
+    }
+
+    #[test]
+    fn invalid_utf8_is_replaced() {
+        let result = unsafe {
+            ffi_string_from_buffer(8, |buffer, len| {
+                write_into(buffer, len, &[b'f', 0xff, b'o', 0])
+            })
+        };
+
+        assert_eq!(result.as_deref(), Some("f\u{fffd}o"));
+    }
+}
