@@ -232,7 +232,7 @@ impl<T, const N: usize> SpscConsumer<T, N> {
         }
 
         if self.is_closed() {
-            return Poll::Ready(None);
+            return Poll::Ready(self.pop());
         }
 
         self.inner.waker.register(cx.waker());
@@ -242,7 +242,7 @@ impl<T, const N: usize> SpscConsumer<T, N> {
         }
 
         if self.is_closed() {
-            return Poll::Ready(None);
+            return Poll::Ready(self.pop());
         }
 
         Poll::Pending
@@ -272,10 +272,12 @@ mod tests {
     use std::future::poll_fn;
     #[cfg(feature = "futures-stream")]
     use std::pin::Pin;
+    use std::sync::{mpsc, Arc};
+    use std::task::{Context, Poll, Wake, Waker};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::SpscRing;
+    use super::{SpscConsumer, SpscProducer, SpscRing};
 
     #[test]
     fn preserves_sequence_in_single_thread() {
@@ -360,6 +362,44 @@ mod tests {
         assert_eq!(pollster::block_on(consumer.pop_async()), None);
 
         producer_thread.join().unwrap();
+    }
+
+    struct NoopWake;
+
+    impl Wake for NoopWake {
+        fn wake(self: Arc<Self>) {}
+    }
+
+    fn spin_pop(consumer: &SpscConsumer<u32, 1>, cx: &Context<'_>) -> Option<u32> {
+        loop {
+            if let Poll::Ready(item) = consumer.poll_pop(cx) {
+                return item;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    #[test]
+    fn item_pushed_just_before_close_is_delivered() {
+        let (producers_tx, producers_rx) = mpsc::channel::<SpscProducer<u32, 1>>();
+        let worker = thread::spawn(move || {
+            for producer in producers_rx {
+                producer.push(7).unwrap();
+                drop(producer);
+            }
+        });
+        let waker = Waker::from(Arc::new(NoopWake));
+        let cx = Context::from_waker(&waker);
+
+        for _ in 0..20_000 {
+            let (producer, consumer) = SpscRing::<u32, 1>::new();
+            producers_tx.send(producer).unwrap();
+            assert_eq!(spin_pop(&consumer, &cx), Some(7));
+            assert_eq!(spin_pop(&consumer, &cx), None);
+        }
+
+        drop(producers_tx);
+        worker.join().unwrap();
     }
 
     #[cfg(feature = "futures-stream")]
