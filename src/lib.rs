@@ -33,7 +33,7 @@
 //! Breaking changes ship as major version bumps; minor versions add modules
 //! or non-breaking helpers.
 
-#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.4.1")]
+#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.4.2")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod callback_context;

@@ -18,6 +18,10 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 ## Design tenets
 
+- **Atomic ring storage.** The crate owns the `spsc` ring and does not depend
+  on `crossbeam-queue`. The ring allocates its slots once. Push, overwrite,
+  and pop do not use a mutex. A registered waker can still execute code
+  that takes a lock.
 - **Executor-agnostic.** No tokio / async-std / smol dependencies; works
   anywhere `std::future::Future` works.
 - **Defence in depth.** Completion contexts are exact-live and one-shot.

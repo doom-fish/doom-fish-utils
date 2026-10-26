@@ -1,6 +1,6 @@
 [package]
 name = "doom-fish-utils"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/doom-fish-utils"
@@ -18,6 +18,7 @@ include = [
     "README.md",
     "LICENSE-*",
     "CHANGELOG.md",
+    "COVERAGE.md",
 ]
 
 [lints.rust]
@@ -39,7 +40,6 @@ default = []
 futures-stream = ["dep:futures-core"]
 
 [dependencies]
-crossbeam-queue = "0.3"
 futures-core = { version = "0.3", optional = true, default-features = false }
 futures-util = { version = "0.3", default-features = false }
 

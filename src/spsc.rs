@@ -26,19 +26,173 @@
 //! # }
 //! ```
 
+use std::cell::UnsafeCell;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use crossbeam_queue::ArrayQueue;
 use futures_util::task::AtomicWaker;
 
+struct Slot<T> {
+    stamp: AtomicUsize,
+    value: UnsafeCell<MaybeUninit<T>>,
+}
+
+#[repr(align(128))]
+struct Cursor(AtomicUsize);
+
+struct Ring<T> {
+    slots: Box<[Slot<T>]>,
+    lap: usize,
+    read: Cursor,
+    write: Cursor,
+}
+
+unsafe impl<T: Send> Sync for Ring<T> {}
+
+impl<T> Ring<T> {
+    fn new(capacity: usize) -> Self {
+        let slots = (0..capacity)
+            .map(|index| Slot {
+                stamp: AtomicUsize::new(index * 2),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+            })
+            .collect();
+
+        Self {
+            slots,
+            lap: capacity.next_power_of_two() * 2,
+            read: Cursor(AtomicUsize::new(0)),
+            write: Cursor(AtomicUsize::new(0)),
+        }
+    }
+
+    fn next(&self, position: usize) -> usize {
+        if ((position & (self.lap - 1)) >> 1) + 1 == self.slots.len() {
+            (position & !(self.lap - 1)).wrapping_add(self.lap)
+        } else {
+            position.wrapping_add(2)
+        }
+    }
+
+    fn push(&self, item: T, overwrite: bool) -> Result<Option<T>, T> {
+        let mut position = self.write.0.load(Ordering::SeqCst);
+
+        loop {
+            let slot = &self.slots[(position & (self.lap - 1)) >> 1];
+            let stamp = slot.stamp.load(Ordering::Acquire);
+            let next = self.next(position);
+
+            if stamp == position {
+                if self
+                    .write
+                    .0
+                    .compare_exchange_weak(position, next, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    unsafe { (*slot.value.get()).write(item) };
+                    slot.stamp
+                        .store(position.wrapping_add(1), Ordering::Release);
+                    return Ok(None);
+                }
+            } else {
+                let oldest = position.wrapping_sub(self.lap);
+                if stamp == oldest.wrapping_add(1) && self.read.0.load(Ordering::SeqCst) == oldest {
+                    if !overwrite {
+                        return Err(item);
+                    }
+                    if self
+                        .read
+                        .0
+                        .compare_exchange(
+                            oldest,
+                            self.next(oldest),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        self.write.0.store(next, Ordering::SeqCst);
+                        let displaced = unsafe { (*slot.value.get()).as_mut_ptr().replace(item) };
+                        slot.stamp
+                            .store(position.wrapping_add(1), Ordering::Release);
+                        return Ok(Some(displaced));
+                    }
+                }
+            }
+
+            std::hint::spin_loop();
+            position = self.write.0.load(Ordering::SeqCst);
+        }
+    }
+
+    fn pop(&self) -> Option<T> {
+        let mut position = self.read.0.load(Ordering::SeqCst);
+
+        loop {
+            let slot = &self.slots[(position & (self.lap - 1)) >> 1];
+            let stamp = slot.stamp.load(Ordering::Acquire);
+            if stamp == position.wrapping_add(1) {
+                if self
+                    .read
+                    .0
+                    .compare_exchange_weak(
+                        position,
+                        self.next(position),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+                {
+                    let item = unsafe { (*slot.value.get()).assume_init_read() };
+                    slot.stamp
+                        .store(position.wrapping_add(self.lap), Ordering::Release);
+                    return Some(item);
+                }
+            } else if stamp == position && self.write.0.load(Ordering::SeqCst) == position {
+                return None;
+            }
+
+            std::hint::spin_loop();
+            position = self.read.0.load(Ordering::SeqCst);
+        }
+    }
+
+    fn len(&self) -> usize {
+        loop {
+            let read = self.read.0.load(Ordering::SeqCst);
+            let write = self.write.0.load(Ordering::SeqCst);
+            if read == self.read.0.load(Ordering::SeqCst) {
+                let read_index = (read & (self.lap - 1)) >> 1;
+                let write_index = (write & (self.lap - 1)) >> 1;
+                return if read == write {
+                    0
+                } else if write_index > read_index {
+                    write_index - read_index
+                } else {
+                    self.slots.len() - read_index + write_index
+                };
+            }
+            std::hint::spin_loop();
+        }
+    }
+}
+
+impl<T> Drop for Ring<T> {
+    fn drop(&mut self) {
+        while let Some(item) = self.pop() {
+            drop(item);
+        }
+    }
+}
+
 struct Inner<T> {
-    queue: ArrayQueue<T>,
+    queue: Ring<T>,
     producer_closed: AtomicBool,
     waker: AtomicWaker,
 }
@@ -102,7 +256,7 @@ impl<T, const N: usize> SpscRing<T, N> {
         );
 
         let inner = Arc::new(Inner {
-            queue: ArrayQueue::new(capacity),
+            queue: Ring::new(capacity),
             producer_closed: AtomicBool::new(false),
             waker: AtomicWaker::new(),
         });
@@ -155,8 +309,8 @@ impl<T, const N: usize> SpscProducer<T, N> {
     ///
     /// Returns `Err(item)` if the ring is currently full.
     pub fn push(&self, item: T) -> Result<(), T> {
-        match self.inner.queue.push(item) {
-            Ok(()) => {
+        match self.inner.queue.push(item, false) {
+            Ok(_) => {
                 self.inner.waker.wake();
                 Ok(())
             }
@@ -169,7 +323,11 @@ impl<T, const N: usize> SpscProducer<T, N> {
     ///
     /// Returns the displaced oldest item when an overwrite happens.
     pub fn push_overwrite(&self, item: T) -> Option<T> {
-        let dropped = self.inner.queue.force_push(item);
+        let dropped = self
+            .inner
+            .queue
+            .push(item, true)
+            .unwrap_or_else(|_| unreachable!());
         self.inner.waker.wake();
         dropped
     }
@@ -183,7 +341,7 @@ impl<T, const N: usize> SpscProducer<T, N> {
     /// Returns the runtime capacity of the ring.
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.inner.queue.capacity()
+        self.inner.queue.slots.len()
     }
 }
 
@@ -216,7 +374,7 @@ impl<T, const N: usize> SpscConsumer<T, N> {
     /// Returns the runtime capacity of the ring.
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.inner.queue.capacity()
+        self.inner.queue.slots.len()
     }
 
     /// Returns `true` if the producer has been dropped.
