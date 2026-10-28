@@ -12,6 +12,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared unsafe `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `UnitCompletionCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
+| [`json`](src/json.rs) | JSON values, a strict parser, type conversions, and a compact writer. Requires the `json` feature. |
 | [`panic_safe`](src/panic_safe.rs) | Callback/panic-payload containment plus `catch_user_panic_result_with_cleanup(...)`, which runs explicit cleanup before best-effort destruction phases. |
 | [`spsc`](src/spsc.rs) | `SpscRing<T, N>` — lock-free, bounded single-producer/single-consumer ring for real-time callback threads feeding async consumers. |
 | [`stream`](src/stream.rs) | `BoundedAsyncStream<T>` — executor-agnostic, bounded, lossy-by-default async stream lifted from the screencapturekit-rs `AsyncSCStream` pattern. Generic over any item type. |
@@ -36,9 +37,13 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 ## Optional features
 
+- `json` adds JSON values, a parser, type conversions, and a writer without additional dependencies.
 - `futures-stream` — adds `futures_core::Stream` wrappers for
   `BoundedAsyncStream<T>` and `spsc::SpscConsumer<T, N>` so either
   consumer can be used directly with `futures::StreamExt` / `tokio_stream`.
+
+The JSON parser accepts at most 128 nested arrays or objects.
+It stores integer literals outside the `i64` range as `JsonValue::Float`.
 
 ## Stability
 

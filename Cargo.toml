@@ -1,6 +1,6 @@
 [package]
 name = "doom-fish-utils"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/doom-fish/doom-fish-utils"
@@ -34,6 +34,7 @@ crate-type = ["lib"]
 
 [features]
 default = []
+json = []
 # Provides `futures_core::Stream` impls on the async consumer wrappers in this
 # crate (`BoundedAsyncStream<T>` and `spsc::SpscConsumerStream<'_, T, N>`).
 # Off by default to keep the dependency footprint minimal.
