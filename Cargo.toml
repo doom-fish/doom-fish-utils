@@ -42,7 +42,6 @@ futures-stream = ["dep:futures-core"]
 
 [dependencies]
 futures-core = { version = "0.3", optional = true, default-features = false }
-futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 pollster = "0.3"

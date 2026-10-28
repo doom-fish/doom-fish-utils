@@ -35,6 +35,13 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
   Multiple destructor panics within one aggregate remain process-aborting
   and are outside the helpers' contract.
 
+## AtomicWaker
+
+`AtomicWaker` comes from futures-core 0.3.34 and always builds.
+The adapted source and upstream MIT OR Apache-2.0 licence files are in `src/atomic_waker/`.
+The source retains the upstream copyright notices.
+The crate has no normal third-party dependency unless you enable `futures-stream`.
+
 ## Optional features
 
 - `json` adds JSON values, a parser, type conversions, and a writer without additional dependencies.

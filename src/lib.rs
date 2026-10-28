@@ -36,6 +36,17 @@
 #![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.4.3")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    missing_docs,
+    unsafe_op_in_unsafe_fn,
+    rustdoc::broken_intra_doc_links
+)]
+mod atomic_waker;
+
 pub mod callback_context;
 pub mod completion;
 pub mod ffi_callbacks;

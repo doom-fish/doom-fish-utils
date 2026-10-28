@@ -10,7 +10,7 @@
 //! no waker is registered.
 //!
 //! Internally this wrapper uses a pre-allocated bounded queue plus an
-//! [`AtomicWaker`] so the consumer can await
+//! `AtomicWaker` so the consumer can await
 //! the next item without forcing the producer to block.
 //!
 //! # Example
@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures_util::task::AtomicWaker;
+use crate::atomic_waker::AtomicWaker;
 
 struct Slot<T> {
     stamp: AtomicUsize,
