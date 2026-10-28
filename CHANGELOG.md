@@ -5,6 +5,20 @@ All notable changes to `doom-fish-utils` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-10-28
+
+### Added
+
+- The `json` feature adds the `json` module: `JsonValue`, a strict parser,
+  `FromJson` conversions, and a compact writer. The feature adds no
+  dependencies.
+
+### Changed
+
+- The crate now owns `AtomicWaker`, adapted from `futures-core` 0.3.34. It
+  does not depend on `futures-util`. Without `futures-stream`, the crate has
+  no third-party dependency. The public API does not change.
+
 ## [0.4.2] - 2026-10-26
 
 ### Changed
