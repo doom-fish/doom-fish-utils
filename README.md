@@ -12,6 +12,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Raw completion contexts are exact-live and one-shot; duplicate guards only apply while their allocation remains live. |
 | [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared unsafe `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `UnitCompletionCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
+| [`future`](src/future/mod.rs) | `oneshot` and `mpsc` channels, an async `Mutex`, the `Stream`, `StreamExt` and `FutureExt` traits, `select`, `join_all` and boxed future types. Requires the `future` feature. |
 | [`four_char_code`](src/four_char_code.rs) | `FourCharCode` newtype (used by pixel formats, `OSType` codes, AudioToolbox, VideoToolbox, etc.). |
 | [`json`](src/json.rs) | JSON values, a strict parser, type conversions, and a compact writer. Requires the `json` feature. |
 | [`panic_safe`](src/panic_safe.rs) | Callback/panic-payload containment plus `catch_user_panic_result_with_cleanup(...)`, which runs explicit cleanup before best-effort destruction phases. |
@@ -63,9 +64,35 @@ Each type has only the operations that its users need.
 - `SecondaryMap` stores values for the keys of a `SlotMap`. It ignores an insert with a key that is older than the stored key.
 - `KeyData::as_ffi` puts the slot index in the low 32 bits and the version in the high 32 bits.
 
+## Futures
+
+The `future` feature adds channels, a lock, and future helpers for any executor. They have no dependencies.
+Each item has only the operations that its users need.
+
+| Item | Operations |
+| --- | --- |
+| `oneshot::channel` | `Sender::send`, `Sender::is_canceled`, `Sender::cancellation`, and `Receiver` as a future of `Result<T, Canceled>`. `Canceled` has `Display`, `Error` and equality. |
+| `mpsc::unbounded` | `UnboundedSender::unbounded_send`, `UnboundedSender::same_receiver`, `Clone`, `UnboundedReceiver::recv`, `UnboundedReceiver::try_recv`, and `UnboundedReceiver` as a `Stream` |
+| `mpsc::channel` | `Sender::try_send`, `Sender::is_closed`, `Receiver::recv`, `Receiver::try_recv`, `Receiver::close` |
+| `Mutex` | `lock` (a future), `try_lock`, and a `MutexGuard` that unlocks when you drop it |
+| `Stream`, `StreamExt` | `poll_next` and `next` |
+| `FutureExt` | `boxed`, `boxed_local`, `now_or_never` |
+| `select`, `Either` | The first future that completes, and the other future |
+| `join_all` | The outputs of all futures, in the order of the input |
+| `BoxFuture`, `LocalBoxFuture` | Pinned and boxed futures, with and without `Send` |
+
+- The `mpsc` channels keep their items in a `VecDeque` behind a `Mutex`. The `oneshot` channel keeps its value behind a `Mutex`. The waiting sides use the crate's `AtomicWaker`. Each send and receive has a constant cost.
+- A send wakes the receiver. The last sender drop also wakes the receiver, so that the receiver can see the end of the channel.
+- If you drop a receiver, the channel closes and drops all items that it holds. Each later send then fails.
+- `mpsc::channel(buffer)` holds `buffer + 1` items, because the one sender has a guaranteed slot. Its `Sender` has no `Clone`.
+- If you drop the `oneshot` receiver, the sender's `cancellation` future completes and `is_canceled` returns `true`.
+- `Mutex` has no data. It wakes one waiter, in the order of the first `lock` poll, when it unlocks.
+- `select` polls the first future before the second future. `join_all` polls each future that did not complete.
+
 ## Optional features
 
 - `collections` adds the `collections` module without additional dependencies.
+- `future` adds the `future` module without additional dependencies.
 - `json` adds JSON values, a parser, type conversions, and a writer without additional dependencies.
 - `futures-stream` — adds `futures_core::Stream` wrappers for
   `BoundedAsyncStream<T>` and `spsc::SpscConsumer<T, N>` so either

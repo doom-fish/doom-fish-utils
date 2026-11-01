@@ -55,6 +55,9 @@ pub mod completion;
 pub mod ffi_callbacks;
 pub mod ffi_string;
 pub mod four_char_code;
+#[cfg(feature = "future")]
+#[expect(missing_docs, clippy::missing_errors_doc)]
+pub mod future;
 #[cfg(feature = "json")]
 pub mod json;
 pub mod panic_safe;

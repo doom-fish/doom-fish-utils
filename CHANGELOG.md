@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     when it grows.
   - `SlotMap<K, V>` and `SecondaryMap<K, V>` store values for generational
     keys. The `new_key_type!` macro makes a key type.
+- The `future` feature adds the `future` module. The feature adds no
+  dependencies.
+  - `oneshot` and `mpsc` have the channels, with the close, cancel and drop
+    rules of the `futures` crate.
+  - `Mutex` is an async lock without data.
+  - `Stream`, `StreamExt`, `FutureExt`, `select`, `Either`, `join_all`,
+    `BoxFuture` and `LocalBoxFuture` are the future helpers.
 
 ## [0.4.3] - 2026-10-28
 
