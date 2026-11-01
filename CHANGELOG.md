@@ -5,6 +5,18 @@ All notable changes to `doom-fish-utils` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] - 2026-11-01
+
+### Added
+
+- The `collections` feature adds the `collections` module. The feature adds
+  no dependencies.
+  - `ArrayVec<T, CAP>` is a vector with a fixed capacity.
+  - `SmallVec<T, N>` keeps up to `N` items inline and moves them to the heap
+    when it grows.
+  - `SlotMap<K, V>` and `SecondaryMap<K, V>` store values for generational
+    keys. The `new_key_type!` macro makes a key type.
+
 ## [0.4.3] - 2026-10-28
 
 ### Added

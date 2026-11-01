@@ -1,5 +1,12 @@
 # Coverage
 
+## Version 0.4.4
+
+The `collections` module has no unit tests in this crate.
+A UI framework and its layout engine use these types.
+The tests of the UI framework and its sum tree passed with this version.
+Clippy passed on macOS and Windows with all features.
+
 ## Version 0.4.2
 
 `doom-fish-utils` provides common FFI utilities. It does not bind an SDK

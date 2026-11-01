@@ -33,7 +33,7 @@
 //! Breaking changes ship as major version bumps; minor versions add modules
 //! or non-breaking helpers.
 
-#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.4.3")]
+#![doc(html_root_url = "https://docs.rs/doom-fish-utils/0.4.4")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[allow(
@@ -48,6 +48,9 @@
 mod atomic_waker;
 
 pub mod callback_context;
+#[cfg(feature = "collections")]
+#[expect(missing_docs, clippy::missing_panics_doc)]
+pub mod collections;
 pub mod completion;
 pub mod ffi_callbacks;
 pub mod ffi_string;

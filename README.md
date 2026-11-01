@@ -8,6 +8,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | Module | Purpose |
 |--------|---------|
 | [`callback_context`](src/callback_context.rs) | `CallbackContext<T>` — reference-counted context for delegate, observer and stream callbacks: the foreign owner holds its reference through the `RETAIN`/`RELEASE` trampolines, `with` skips deactivated contexts and contains panics, and dropping the Rust handle deactivates the context. |
+| [`collections`](src/collections/mod.rs) | `ArrayVec<T, CAP>`, `SmallVec<T, N>`, `SlotMap<K, V>` and `SecondaryMap<K, V>`, with the `new_key_type!` macro. Requires the `collections` feature. |
 | [`completion`](src/completion.rs) | Sync + async completion handlers for callback-based FFI APIs. Raw completion contexts are exact-live and one-shot; duplicate guards only apply while their allocation remains live. |
 | [`ffi_callbacks`](src/ffi_callbacks.rs) | Shared unsafe `extern "C"` callback type aliases (`JsonCallback`, `AsyncCallback`, `UnitCompletionCallback`, `SimpleCallback`, `DropCallback`, `StreamEventCallback`, `AsyncCb`) reused across bridge crates. |
 | [`ffi_string`](src/ffi_string.rs) | Helpers for retrieving owned `String`s from buffer-writing or pointer-returning C / Swift APIs, with RAII-driven dealloc. |
@@ -42,8 +43,29 @@ The adapted source and upstream MIT OR Apache-2.0 licence files are in `src/atom
 The source retains the upstream copyright notices.
 The crate has no normal third-party dependency unless you enable `futures-stream`.
 
+## Collections
+
+The `collections` feature adds four collection types and a key macro. They have no dependencies.
+Each type has only the operations that its users need.
+
+| Item | Operations |
+| --- | --- |
+| `ArrayVec<T, CAP>` | `new` (a `const fn`), `as_slice`, `push`, `pop`, `insert`, `clear`, `drain`, slice access, `Extend`, `FromIterator`, `IntoIterator`, `Clone`, `Debug`, `Default` |
+| `SmallVec<T, N>` | `new` (a `const fn`), `inline_size`, `as_slice`, `push`, `pop`, `remove`, `truncate`, `clear`, `reserve`, `extend_from_slice`, `dedup`, `retain`, `drain`, slice access, `From<Vec<T>>`, `From<&[T]>`, `Extend`, `FromIterator`, `IntoIterator`, `Clone`, `Debug`, `Default`, comparison, `Hash` |
+| `SlotMap<K, V>` | `with_capacity`, `len`, `is_empty`, `insert`, `remove`, `clear`, `get`, `get_mut`, `keys`, `values`, `values_mut`, `Index`, `IndexMut`, `Clone`, `Debug`, `Default` |
+| `SecondaryMap<K, V>` | `with_capacity`, `insert`, `remove`, `get`, `get_mut`, `get_disjoint_mut`, `Clone`, `Debug`, `Default` |
+| `KeyData`, `Key`, `DefaultKey`, `new_key_type!` | `KeyData::as_ffi`, `KeyData::from_ffi`, `Key::data`, and a key type for each `new_key_type!` declaration |
+
+- `ArrayVec` keeps its items inline. `push`, `insert` and `extend` panic when the vector is full. `drain` moves the items out immediately.
+- `SmallVec` keeps up to `N` items inline. When it grows past `N`, it moves its items to a `Vec`, and it stays on the heap after that.
+- `SlotMap` gives a generational key for each value. A key from a removed value does not find a later value in the same slot.
+- If you index a `SlotMap` with a key that is not valid, the map panics with the message "invalid SlotMap key used".
+- `SecondaryMap` stores values for the keys of a `SlotMap`. It ignores an insert with a key that is older than the stored key.
+- `KeyData::as_ffi` puts the slot index in the low 32 bits and the version in the high 32 bits.
+
 ## Optional features
 
+- `collections` adds the `collections` module without additional dependencies.
 - `json` adds JSON values, a parser, type conversions, and a writer without additional dependencies.
 - `futures-stream` — adds `futures_core::Stream` wrappers for
   `BoundedAsyncStream<T>` and `spsc::SpscConsumer<T, N>` so either
