@@ -5,6 +5,33 @@ All notable changes to `doom-fish-utils` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The `memchr` feature adds the `memchr` module. The feature adds no
+  dependencies.
+  - `memchr`, `memchr2`, `memchr3`, `memrchr`, `memrchr2` and `memrchr3` find
+    bytes. They use NEON on aarch64, SSE2 and AVX2 on x86_64, and `usize`
+    words on other targets.
+  - `memchr_iter`, `memrchr_iter` and their forms for two and three bytes
+    give all positions.
+  - `memmem` finds substrings forward and backward with `find`, `rfind`,
+    `find_iter`, `rfind_iter`, `Finder` and `FinderRev`. A SIMD prefilter on
+    a pair of rare bytes finds candidates. Two-Way gives a linear worst case.
+  - `memmem::CaseInsensitiveFinder` finds a substring and ignores the case of
+    ASCII letters.
+- The `regex` feature adds the `regex` module and enables `memchr`. The
+  feature adds no other dependencies.
+  - `regex::Regex` searches `&str`, and `regex::bytes::Regex` searches
+    `&[u8]`. The syntax, the match semantics and the API are those of the
+    `regex` crate 1.x.
+  - `RegexBuilder` sets the flags, the size limit and the DFA cache limit.
+  - The engine uses literal searches, prefilters, a SIMD multi-literal
+    search, a lazy DFA and a PikeVM. The time of each search is linear.
+  - The Unicode classes and the case folding come from the Rust standard
+    library. The README lists the differences from the `regex` crate.
+
 ## [0.4.4] - 2026-11-01
 
 ### Added

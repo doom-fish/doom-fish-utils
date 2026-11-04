@@ -37,6 +37,8 @@ default = []
 collections = []
 future = []
 json = []
+memchr = []
+regex = ["memchr"]
 # Provides `futures_core::Stream` impls on the async consumer wrappers in this
 # crate (`BoundedAsyncStream<T>` and `spsc::SpscConsumerStream<'_, T, N>`).
 # Off by default to keep the dependency footprint minimal.

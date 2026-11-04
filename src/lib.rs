@@ -60,7 +60,13 @@ pub mod four_char_code;
 pub mod future;
 #[cfg(feature = "json")]
 pub mod json;
+#[cfg(feature = "memchr")]
+#[expect(missing_docs)]
+pub mod memchr;
 pub mod panic_safe;
+#[cfg(feature = "regex")]
+#[expect(missing_docs, clippy::missing_errors_doc)]
+pub mod regex;
 pub mod spsc;
 pub mod stream;
 
