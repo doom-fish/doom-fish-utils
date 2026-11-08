@@ -1,6 +1,6 @@
 # Coverage
 
-## Unreleased
+## Version 0.4.5
 
 The `memchr` and `regex` modules have no unit tests in this crate.
 Temporary programs compared them with simple searches and with the `regex` crate 1.13.

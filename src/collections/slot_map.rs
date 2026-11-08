@@ -12,6 +12,7 @@ pub struct KeyData {
 }
 
 impl KeyData {
+    #[inline]
     const fn new(idx: u32, version: u32) -> Self {
         let Some(version) = NonZeroU32::new(version | 1) else {
             unreachable!()
@@ -19,11 +20,13 @@ impl KeyData {
         Self { idx, version }
     }
 
+    #[inline]
     #[must_use]
     pub const fn as_ffi(self) -> u64 {
         ((self.version.get() as u64) << 32) | self.idx as u64
     }
 
+    #[inline]
     #[must_use]
     pub const fn from_ffi(value: u64) -> Self {
         Self::new((value & 0xffff_ffff) as u32, (value >> 32) as u32)
@@ -69,12 +72,14 @@ macro_rules! new_key_type {
         $visibility struct $name($crate::collections::KeyData);
 
         impl ::core::convert::From<$crate::collections::KeyData> for $name {
+            #[inline]
             fn from(data: $crate::collections::KeyData) -> Self {
                 Self(data)
             }
         }
 
         impl $crate::collections::Key for $name {
+            #[inline]
             fn data(&self) -> $crate::collections::KeyData {
                 self.0
             }
