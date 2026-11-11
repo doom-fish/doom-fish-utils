@@ -179,7 +179,7 @@ where
     // `to_string`. `from_utf8_lossy(...).into_owned()` allocates once
     // and skips the redundant copy. For invalid UTF-8 (extremely rare
     // for AppKit strings) both paths allocate the replacement-char string.
-    let bytes = CStr::from_ptr(ptr).to_bytes();
+    let bytes = CStr::from_ptr(ptr.cast()).to_bytes();
     if bytes.is_empty() {
         return None;
     }
