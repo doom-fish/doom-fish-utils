@@ -22,7 +22,7 @@ use std::ffi::{c_char, c_void, CStr};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, Once, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
@@ -62,6 +62,7 @@ struct SyncCompletionInner<T> {
 /// live.
 pub struct SyncCompletion<T> {
     inner: Arc<SyncCompletionInner<T>>,
+    callback_ref: Once,
 }
 
 /// Raw pointer type for passing to FFI callbacks
@@ -75,13 +76,9 @@ impl<T> SyncCompletion<T> {
     /// - `context_ptr` should be passed to the FFI callback
     #[must_use]
     pub fn new() -> (Self, SyncCompletionPtr) {
-        let inner = Arc::new(SyncCompletionInner {
-            consumed: AtomicBool::new(false),
-            state: Mutex::new(SyncCompletionState { result: None }),
-            cvar: Condvar::new(),
-        });
-        let raw = Arc::into_raw(Arc::clone(&inner));
-        (Self { inner }, raw as SyncCompletionPtr)
+        let completion = Self::default();
+        let context = completion.context_ptr();
+        (completion, context)
     }
 
     /// Wait for the completion callback and return the result
@@ -133,6 +130,9 @@ impl<T> SyncCompletion<T> {
 
     #[must_use]
     pub fn context_ptr(&self) -> SyncCompletionPtr {
+        self.callback_ref.call_once(|| {
+            let _ = Arc::into_raw(Arc::clone(&self.inner));
+        });
         Arc::as_ptr(&self.inner).cast_mut().cast()
     }
 
@@ -213,7 +213,14 @@ impl<T> SyncCompletion<T> {
 
 impl<T> Default for SyncCompletion<T> {
     fn default() -> Self {
-        Self::new().0
+        Self {
+            inner: Arc::new(SyncCompletionInner {
+                consumed: AtomicBool::new(false),
+                state: Mutex::new(SyncCompletionState { result: None }),
+                cvar: Condvar::new(),
+            }),
+            callback_ref: Once::new(),
+        }
     }
 }
 
@@ -351,29 +358,21 @@ impl<T> Future for AsyncCompletionFuture<T> {
     type Output = Result<T, String>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let waker = cx.waker().clone();
         let mut state = self
             .inner
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        state.result.take().map_or_else(
-            || {
-                // Avoid the lost-wakeup race: when the executor re-polls
-                // with a different waker (e.g. tokio::select! moves the
-                // future between arms), the previous waker would otherwise
-                // remain stored and any pending callback would wake the
-                // wrong task. `will_wake` skips the clone if the executor
-                // is reusing the same waker.
-                let waker = cx.waker();
-                match state.waker {
-                    Some(ref existing) if existing.will_wake(waker) => {}
-                    _ => state.waker = Some(waker.clone()),
-                }
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+        if let Some(result) = state.result.take() {
+            drop(state);
+            return Poll::Ready(result);
+        }
+        let previous = state.waker.replace(waker);
+        drop(state);
+        drop(previous);
+        Poll::Pending
     }
 }
 

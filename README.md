@@ -3,6 +3,13 @@
 Framework-agnostic FFI utilities shared by every safe-Rust Apple-SDK
 binding in the [doom-fish](https://github.com/doom-fish) family.
 
+## Installation
+
+```toml
+[dependencies]
+doom-fish-utils = "0.5.0"
+```
+
 ## What's in here
 
 | Module | Purpose |
@@ -25,8 +32,9 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 
 - **Atomic ring storage.** The crate owns the `spsc` ring and does not depend
   on `crossbeam-queue`. The ring allocates its slots once. Push, overwrite,
-  and pop do not use a mutex. A registered waker can still execute code
-  that takes a lock.
+  and pop do not use a mutex. On `main`, `push_overwrite` never waits for a claimed slot.
+  It returns the displaced item or, if the slot is busy, the incoming item. Version 0.5.0 can wait for the slot.
+  A registered waker can still execute code that takes a lock.
 - **Executor-agnostic.** No tokio / async-std / smol dependencies; works
   anywhere `std::future::Future` works.
 - **Defence in depth.** Completion contexts are exact-live and one-shot.

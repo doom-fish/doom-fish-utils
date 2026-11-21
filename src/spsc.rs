@@ -81,54 +81,44 @@ impl<T> Ring<T> {
     }
 
     fn push(&self, item: T, overwrite: bool) -> Result<Option<T>, T> {
-        let mut position = self.write.0.load(Ordering::SeqCst);
-
-        loop {
-            let slot = &self.slots[(position & (self.lap - 1)) >> 1];
-            let stamp = slot.stamp.load(Ordering::Acquire);
-            let next = self.next(position);
-
-            if stamp == position {
-                if self
-                    .write
-                    .0
-                    .compare_exchange_weak(position, next, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
-                    unsafe { (*slot.value.get()).write(item) };
-                    slot.stamp
-                        .store(position.wrapping_add(1), Ordering::Release);
-                    return Ok(None);
-                }
-            } else {
-                let oldest = position.wrapping_sub(self.lap);
-                if stamp == oldest.wrapping_add(1) && self.read.0.load(Ordering::SeqCst) == oldest {
-                    if !overwrite {
-                        return Err(item);
-                    }
-                    if self
-                        .read
-                        .0
-                        .compare_exchange(
-                            oldest,
-                            self.next(oldest),
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                    {
-                        self.write.0.store(next, Ordering::SeqCst);
-                        let displaced = unsafe { (*slot.value.get()).as_mut_ptr().replace(item) };
-                        slot.stamp
-                            .store(position.wrapping_add(1), Ordering::Release);
-                        return Ok(Some(displaced));
-                    }
-                }
+        let position = self.write.0.load(Ordering::SeqCst);
+        let slot = &self.slots[(position & (self.lap - 1)) >> 1];
+        let stamp = slot.stamp.load(Ordering::Acquire);
+        let next = self.next(position);
+        let displaced = if stamp == position {
+            if self
+                .write
+                .0
+                .compare_exchange(position, next, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return Err(item);
             }
-
-            std::hint::spin_loop();
-            position = self.write.0.load(Ordering::SeqCst);
-        }
+            unsafe { (*slot.value.get()).write(item) };
+            None
+        } else {
+            let oldest = position.wrapping_sub(self.lap);
+            if !overwrite
+                || stamp != oldest.wrapping_add(1)
+                || self
+                    .read
+                    .0
+                    .compare_exchange(
+                        oldest,
+                        self.next(oldest),
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_err()
+            {
+                return Err(item);
+            }
+            self.write.0.store(next, Ordering::SeqCst);
+            Some(unsafe { (*slot.value.get()).as_mut_ptr().replace(item) })
+        };
+        slot.stamp
+            .store(position.wrapping_add(1), Ordering::Release);
+        Ok(displaced)
     }
 
     fn pop(&self) -> Option<T> {
@@ -307,7 +297,7 @@ impl<T, const N: usize> SpscProducer<T, N> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(item)` if the ring is currently full.
+    /// Returns `Err(item)` if the next slot is full or claimed by another operation.
     pub fn push(&self, item: T) -> Result<(), T> {
         match self.inner.queue.push(item, false) {
             Ok(_) => {
@@ -321,15 +311,15 @@ impl<T, const N: usize> SpscProducer<T, N> {
     /// Pushes an item into the ring, overwriting the oldest buffered entry if
     /// necessary.
     ///
-    /// Returns the displaced oldest item when an overwrite happens.
+    /// Returns the displaced oldest item, or the incoming item if the next slot is busy.
     pub fn push_overwrite(&self, item: T) -> Option<T> {
-        let dropped = self
-            .inner
-            .queue
-            .push(item, true)
-            .unwrap_or_else(|_| unreachable!());
-        self.inner.waker.wake();
-        dropped
+        match self.inner.queue.push(item, true) {
+            Ok(displaced) => {
+                self.inner.waker.wake();
+                displaced
+            }
+            Err(not_inserted) => Some(not_inserted),
+        }
     }
 
     /// Returns the current buffered item count.
