@@ -18,7 +18,7 @@ binding in the [doom-fish](https://github.com/doom-fish) family.
 | [`memchr`](src/memchr/mod.rs) | Byte search (`memchr`, `memchr2`, `memchr3`, `memrchr` and the iterators) and substring search (`memmem`) with SIMD. Requires the `memchr` feature. |
 | [`panic_safe`](src/panic_safe.rs) | Callback/panic-payload containment plus `catch_user_panic_result_with_cleanup(...)`, which runs explicit cleanup before best-effort destruction phases. |
 | [`regex`](src/regex/mod.rs) | Regular expressions with the syntax, the match semantics and the API of the `regex` crate, for `&str` and for `&[u8]`. Requires the `regex` feature. |
-| [`spsc`](src/spsc.rs) | `SpscRing<T, N>` — lock-free, bounded single-producer/single-consumer ring for real-time callback threads feeding async consumers. |
+| [`spsc`](src/spsc.rs) | `SpscRing<T, N>` — bounded ring for a single producer and consumer. `pop_async` and `stream` require an exclusive consumer borrow. |
 | [`stream`](src/stream.rs) | `BoundedAsyncStream<T>` — executor-agnostic, bounded, lossy-by-default async stream lifted from the screencapturekit-rs `AsyncSCStream` pattern. Generic over any item type. |
 
 ## Design tenets

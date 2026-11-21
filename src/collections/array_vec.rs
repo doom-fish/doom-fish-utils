@@ -79,13 +79,38 @@ impl<T, const CAP: usize> ArrayVec<T, CAP> {
     }
 
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&mut T) -> bool) {
-        let len = self.len;
-        self.len = 0;
-        for index in 0..len {
-            let mut value = unsafe { self.items[index].assume_init_read() };
-            if keep(&mut value) {
-                self.items[self.len].write(value);
-                self.len += 1;
+        struct Gap<'a, T, const N: usize> {
+            array: &'a mut ArrayVec<T, N>,
+            read: usize,
+            write: usize,
+        }
+        impl<T, const N: usize> Drop for Gap<'_, T, N> {
+            fn drop(&mut self) {
+                let remaining = self.array.len - self.read;
+                if remaining != 0 && self.read != self.write {
+                    let base = self.array.items.as_mut_ptr();
+                    unsafe { ptr::copy(base.add(self.read), base.add(self.write), remaining) };
+                }
+                self.array.len = self.write + remaining;
+            }
+        }
+        let mut gap = Gap {
+            array: self,
+            read: 0,
+            write: 0,
+        };
+        while gap.read < gap.array.len {
+            let index = gap.read;
+            let item = unsafe { gap.array.items[index].assume_init_mut() };
+            if keep(item) {
+                if gap.read != gap.write {
+                    gap.array.items.swap(index, gap.write);
+                }
+                gap.write += 1;
+                gap.read += 1;
+            } else {
+                gap.read += 1;
+                unsafe { gap.array.items[index].assume_init_drop() };
             }
         }
     }

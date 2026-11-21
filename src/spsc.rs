@@ -19,7 +19,7 @@
 //! use doom_fish_utils::spsc::SpscRing;
 //!
 //! # async fn run() {
-//! let (producer, consumer) = SpscRing::<u32, 256>::new();
+//! let (producer, mut consumer) = SpscRing::<u32, 256>::new();
 //!
 //! producer.push(1).unwrap();
 //! assert_eq!(consumer.pop_async().await, Some(1));
@@ -218,7 +218,7 @@ pub struct SpscConsumer<T, const N: usize> {
 /// Future returned by [`SpscConsumer::pop_async`].
 #[must_use = "futures do nothing unless awaited or polled"]
 pub struct PopFuture<'a, T, const N: usize> {
-    consumer: &'a SpscConsumer<T, N>,
+    consumer: &'a mut SpscConsumer<T, N>,
 }
 
 /// Feature-gated [`futures_core::Stream`] wrapper around an [`SpscConsumer`].
@@ -226,7 +226,7 @@ pub struct PopFuture<'a, T, const N: usize> {
 #[cfg_attr(docsrs, doc(cfg(feature = "futures-stream")))]
 #[must_use = "streams do nothing unless polled"]
 pub struct SpscConsumerStream<'a, T, const N: usize> {
-    consumer: &'a SpscConsumer<T, N>,
+    consumer: &'a mut SpscConsumer<T, N>,
 }
 
 #[allow(clippy::new_ret_no_self)]
@@ -361,7 +361,7 @@ impl<T, const N: usize> SpscConsumer<T, N> {
 
     /// Returns a future that resolves to the next buffered item, or `None` once
     /// the producer has been dropped and the ring is empty.
-    pub const fn pop_async(&self) -> PopFuture<'_, T, N> {
+    pub const fn pop_async(&mut self) -> PopFuture<'_, T, N> {
         PopFuture { consumer: self }
     }
 
@@ -385,7 +385,7 @@ impl<T, const N: usize> SpscConsumer<T, N> {
 
     #[cfg(feature = "futures-stream")]
     #[cfg_attr(docsrs, doc(cfg(feature = "futures-stream")))]
-    pub const fn stream(&self) -> SpscConsumerStream<'_, T, N> {
+    pub const fn stream(&mut self) -> SpscConsumerStream<'_, T, N> {
         SpscConsumerStream { consumer: self }
     }
 
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn pop_async_drains_then_closes() {
-        let (producer, consumer) = SpscRing::<u32, 8>::new();
+        let (producer, mut consumer) = SpscRing::<u32, 8>::new();
         producer.push(1).unwrap();
         producer.push(2).unwrap();
         drop(producer);
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn concurrent_producer_consumer_preserve_order() {
-        let (producer, consumer) = SpscRing::<u64, 1024>::new();
+        let (producer, mut consumer) = SpscRing::<u64, 1024>::new();
         let producer_thread = thread::spawn(move || {
             for expected in 0..50_000_u64 {
                 let mut item = expected;
@@ -570,7 +570,7 @@ mod tests {
     fn stream_wrapper_yields_items() {
         use futures_core::Stream;
 
-        let (producer, consumer) = SpscRing::<u32, 4>::new();
+        let (producer, mut consumer) = SpscRing::<u32, 4>::new();
         let mut stream = consumer.stream();
 
         producer.push(11).unwrap();

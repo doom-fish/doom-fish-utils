@@ -336,19 +336,18 @@ impl<K: Key, V> SecondaryMap<K, V> {
         &mut self,
         keys: [K; COUNT],
     ) -> Option<[&mut V; COUNT]> {
+        let keys = keys.map(|key| key.data());
         for (position, key) in keys.iter().enumerate() {
-            let index = key.data().idx;
-            if self.get(*key).is_none()
-                || keys[..position]
-                    .iter()
-                    .any(|other| other.data().idx == index)
+            let entry = self.slots.get(key.idx as usize)?.as_ref()?;
+            if entry.version != key.version
+                || keys[..position].iter().any(|other| other.idx == key.idx)
             {
                 return None;
             }
         }
         let slots = self.slots.as_mut_ptr();
         Some(keys.map(
-            |key| match unsafe { &mut *slots.add(key.data().idx as usize) } {
+            |key| match unsafe { &mut *slots.add(key.idx as usize) } {
                 Some(entry) => &mut entry.value,
                 None => unreachable!(),
             },
